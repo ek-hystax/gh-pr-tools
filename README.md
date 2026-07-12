@@ -72,6 +72,17 @@ gh pr-tools tg import --json team-tg-map.json
 
 This map is per-machine, not shared — each person adds the handles they care about.
 
+### `gh pr-tools clear [-y|--yes]`
+
+Removes all per-machine config created by `init`/`tg` (`~/.config/gh-pr-tools`,
+config and tg-map included). Prompts for confirmation unless `-y`/`--yes` is
+passed. Combine with removing the extension itself for a full uninstall:
+
+```
+gh pr-tools clear -y
+gh extension remove pr-tools
+```
+
 ## Layout
 
 ```
@@ -82,4 +93,5 @@ lib/
   prd.sh / prd.jq       gh pr-tools prd
   todo.sh / todo.jq     gh pr-tools todo
   tg.sh                 gh pr-tools tg
+  clear.sh              gh pr-tools clear
 ```

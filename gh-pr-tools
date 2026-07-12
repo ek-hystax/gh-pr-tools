@@ -18,6 +18,7 @@ commands:
   tg list
   tg import [file]                  bulk add from "login handle"/"login,handle" lines (or stdin)
   tg import --json [file]           bulk add from a {"login": "handle"} JSON file (or stdin)
+  clear [-y|--yes]                  remove all config created by init/tg (prompts unless -y)
 EOF
 }
 
@@ -29,6 +30,7 @@ case "$cmd" in
   prd)                exec "$dir/lib/prd.sh" "$@" ;;
   todo)                exec "$dir/lib/todo.sh" "$@" ;;
   tg)                  exec "$dir/lib/tg.sh" "$@" ;;
+  clear)               exec "$dir/lib/clear.sh" "$@" ;;
   ""|help|-h|--help)  usage ;;
   *)
     echo "gh pr-tools: unknown command '$cmd'" >&2
