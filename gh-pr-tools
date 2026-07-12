@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# gh extension entry point. Repo must be named gh-pr-tools; gh execs this file
+# and forwards all arguments when you run `gh pr-tools ...`.
+set -euo pipefail
+
+dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  cat <<'EOF'
+usage: gh pr-tools <command> [args]
+
+commands:
+  init                              configure repo/org/Jira for this machine
+  prd <pr|TICKET-123|link|branch>   show a PR's approvers and pending reviewers
+  todo                              list open PRs where you're a pending reviewer
+  tg add <login> <handle>           map a GitHub login to a Telegram handle
+  tg remove <login>
+  tg list
+EOF
+}
+
+cmd="${1:-}"
+[ $# -gt 0 ] && shift || true
+
+case "$cmd" in
+  init)               exec "$dir/lib/init.sh" "$@" ;;
+  prd)                exec "$dir/lib/prd.sh" "$@" ;;
+  todo)                exec "$dir/lib/todo.sh" "$@" ;;
+  tg)                  exec "$dir/lib/tg.sh" "$@" ;;
+  ""|help|-h|--help)  usage ;;
+  *)
+    echo "gh pr-tools: unknown command '$cmd'" >&2
+    usage
+    exit 1
+    ;;
+esac
