@@ -16,6 +16,8 @@ commands:
   tg add <login> <handle>           map a GitHub login to a Telegram handle
   tg remove <login>
   tg list
+  tg import [file]                  bulk add from "login handle"/"login,handle" lines (or stdin)
+  tg import --json [file]           bulk add from a {"login": "handle"} JSON file (or stdin)
 EOF
 }
 

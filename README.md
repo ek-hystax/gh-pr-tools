@@ -44,7 +44,7 @@ gh pr-tools prd bug/KF-1309
 Lists open PRs where you're a pending reviewer, as a table with CI/merge
 status, size, and age.
 
-### `gh pr-tools tg add|remove|list`
+### `gh pr-tools tg add|remove|list|import`
 
 Manage your local GitHub-login → Telegram-handle map (`~/.config/gh-pr-tools/tg-map.json`),
 used to render `https://t.me/<handle>` links next to reviewer names in `prd`.
@@ -53,6 +53,21 @@ used to render `https://t.me/<handle>` links next to reviewer names in `prd`.
 gh pr-tools tg add octocat octocat_tg
 gh pr-tools tg list
 gh pr-tools tg remove octocat
+```
+
+To add several people at once, `import` reads a file (or stdin) of `login handle`
+or `login,handle` lines — blank lines and `#` comments are skipped:
+
+```
+gh pr-tools tg import team.txt
+pbpaste | gh pr-tools tg import          # from clipboard
+```
+
+Or merge in a raw `{"login": "handle"}` JSON map — handy for copying someone else's
+exported map wholesale:
+
+```
+gh pr-tools tg import --json team-tg-map.json
 ```
 
 This map is per-machine, not shared — each person adds the handles they care about.
