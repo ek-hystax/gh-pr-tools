@@ -2,18 +2,175 @@
 # Shared config/tg-map loading for all gh-pr-tools subcommands.
 
 config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/gh-pr-tools"
-config_file="$config_dir/config.sh"
+profiles_dir="$config_dir/profiles"
 tgmap_file="$config_dir/tg-map.json"
 
-load_config() {
-  if [ ! -f "$config_file" ]; then
+# Optional override set by the entry point from --profile / -p.
+GH_PR_TOOLS_PROFILE="${GH_PR_TOOLS_PROFILE:-}"
+
+validate_profile_name() {
+  local name="$1"
+  if [[ ! "$name" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]]; then
+    echo "gh pr-tools: invalid profile name '$name' (use letters, digits, _, -)" >&2
+    exit 1
+  fi
+}
+
+# Turn a repo short-name into a valid profile name, or "default".
+suggest_profile_name() {
+  local cleaned
+  cleaned=$(printf '%s' "$1" | tr -c 'A-Za-z0-9_-' '-' | sed -E 's/^-+//; s/-+$//; s/-+/-/g')
+  if [[ "$cleaned" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]]; then
+    printf '%s\n' "$cleaned"
+  else
+    printf 'default\n'
+  fi
+}
+
+profile_path() {
+  echo "$profiles_dir/$1.sh"
+}
+
+profile_exists() {
+  [ -f "$(profile_path "$1")" ]
+}
+
+require_profile_exists() {
+  validate_profile_name "$1"
+  profile_exists "$1" || {
+    echo "gh pr-tools: unknown profile '$1' — run: gh pr-tools profile list" >&2
+    exit 1
+  }
+}
+
+list_profile_names() {
+  [ -d "$profiles_dir" ] || return 0
+  local f
+  for f in "$profiles_dir"/*.sh; do
+    [ -e "$f" ] || continue
+    basename "$f" .sh
+  done | sort
+}
+
+# Read REPO= from a profile file without sourcing (safe for listing/matching).
+profile_repo() {
+  local path line val
+  path=$(profile_path "$1")
+  [ -f "$path" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      REPO=*)
+        val="${line#REPO=}"
+        if [[ "$val" == \"*\" || "$val" == \'*\' ]]; then
+          val="${val:1:${#val}-2}"
+        fi
+        printf '%s\n' "$val"
+        return 0
+        ;;
+    esac
+  done < "$path"
+  return 1
+}
+
+in_git_worktree() {
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
+gh_repo_view() {
+  gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null
+}
+
+cwd_repo() {
+  in_git_worktree || return 1
+  gh_repo_view || return 1
+}
+
+# Find profile names whose REPO matches $1. Prints one name per line.
+profiles_matching_repo() {
+  local want="$1" name repo
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    repo=$(profile_repo "$name" || true)
+    [ "$repo" = "$want" ] && printf '%s\n' "$name"
+  done < <(list_profile_names)
+}
+
+# Resolve which profile to use. Prints the name. Exits 1 on failure.
+# Honors GH_PR_TOOLS_PROFILE (set by entry point from --profile / -p).
+#
+# Resolution:
+#   1. --profile / -p
+#   2. Must be inside a git checkout — otherwise a hard error.
+#   3. Profile whose REPO matches this checkout's repo (exactly one).
+#      - gh can't resolve a repo for this checkout, or no profile matches →
+#        error suggesting init.
+#      - more than one profile matches → ambiguity error naming them.
+resolve_profile() {
+  local cwd matches
+
+  if [ -n "${GH_PR_TOOLS_PROFILE:-}" ]; then
+    require_profile_exists "$GH_PR_TOOLS_PROFILE"
+    printf '%s\n' "$GH_PR_TOOLS_PROFILE"
+    return 0
+  fi
+
+  if [ -z "$(list_profile_names)" ]; then
     echo "gh pr-tools: not configured yet — run: gh pr-tools init" >&2
     exit 1
   fi
+
+  if ! in_git_worktree; then
+    echo "gh pr-tools: No Git repository was found in the current directory. Please initialize a Git repository first, then run: gh pr-tools init" >&2
+    exit 1
+  fi
+
+  cwd=$(gh_repo_view || true)
+  if [ -z "$cwd" ]; then
+    echo "gh pr-tools: No settings were found for this Git repository. Please run: gh pr-tools init" >&2
+    exit 1
+  fi
+
+  matches=$(profiles_matching_repo "$cwd" || true)
+  case "$matches" in
+    "")
+      echo "gh pr-tools: No settings were found for this Git repository. Please run: gh pr-tools init" >&2
+      exit 1
+      ;;
+    *$'\n'*)
+      local names_oneline
+      names_oneline=$(printf '%s' "$matches" | tr '\n' ' ' | sed -E 's/ +$//')
+      echo "gh pr-tools: multiple profiles match repo '$cwd' ($names_oneline) — pass --profile NAME to disambiguate" >&2
+      exit 1
+      ;;
+    *)
+      printf '%s\n' "$matches"
+      return 0
+      ;;
+  esac
+}
+
+# Reject creating/updating a profile to a REPO already owned by another profile.
+assert_repo_unique() {
+  local name="$1" repo="$2" other other_repo
+  while IFS= read -r other; do
+    [ -n "$other" ] || continue
+    [ "$other" = "$name" ] && continue
+    other_repo=$(profile_repo "$other" || true)
+    if [ "$other_repo" = "$repo" ]; then
+      echo "gh pr-tools: repo '$repo' is already used by profile '$other'" >&2
+      exit 1
+    fi
+  done < <(list_profile_names)
+}
+
+load_config() {
+  local name path
+  name=$(resolve_profile)
+  path=$(profile_path "$name")
   # shellcheck source=/dev/null
-  source "$config_file"
-  : "${REPO:?REPO missing in $config_file — re-run: gh pr-tools init}"
-  : "${ORG:?ORG missing in $config_file — re-run: gh pr-tools init}"
+  source "$path"
+  : "${REPO:?REPO missing in $path — re-run: gh pr-tools init}"
+  : "${ORG:?ORG missing in $path — re-run: gh pr-tools init}"
 }
 
 tgmap_json() {

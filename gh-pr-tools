@@ -7,10 +7,13 @@ dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   cat <<'EOF'
-usage: gh pr-tools <command> [args]
+usage: gh pr-tools [--profile NAME|-p NAME] <command> [args]
 
 commands:
-  init                              configure repo/org/Jira for this machine
+  init                              create or update a profile (repo/org/Jira)
+  profile list                      list all profiles ((cwd) marks a checkout match)
+  profile show [name]               print a profile's settings (default: currently resolved)
+  profile remove <name>             delete a profile
   prd <pr|TICKET-123|link|branch>   show a PR's approvers and pending reviewers
   todo                              list open PRs where you're a pending reviewer
   tg add <login> <handle>           map a GitHub login to a Telegram handle
@@ -19,18 +22,42 @@ commands:
   tg import [file]                  bulk add from "login handle"/"login,handle" lines (or stdin)
   tg import --json [file]           bulk add from a {"login": "handle"} JSON file (or stdin)
   clear [-y|--yes]                  remove all config created by init/tg (prompts unless -y)
+
+Profile resolution (for prd/todo): --profile, else match by repo inside a git checkout (must be in git; run init if unmatched).
+Telegram map is shared across profiles.
 EOF
 }
+
+# Strip global --profile / -p before the subcommand.
+GH_PR_TOOLS_PROFILE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --profile|-p)
+      [ $# -ge 2 ] || { echo "gh pr-tools: $1 requires a profile name" >&2; exit 1; }
+      GH_PR_TOOLS_PROFILE="$2"
+      shift 2
+      ;;
+    --profile=*|-p=*)
+      GH_PR_TOOLS_PROFILE="${1#*=}"
+      shift
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+export GH_PR_TOOLS_PROFILE
 
 cmd="${1:-}"
 [ $# -gt 0 ] && shift || true
 
 case "$cmd" in
   init)               exec "$dir/lib/init.sh" "$@" ;;
+  profile)            exec "$dir/lib/profile.sh" "$@" ;;
   prd)                exec "$dir/lib/prd.sh" "$@" ;;
-  todo)                exec "$dir/lib/todo.sh" "$@" ;;
-  tg)                  exec "$dir/lib/tg.sh" "$@" ;;
-  clear)               exec "$dir/lib/clear.sh" "$@" ;;
+  todo)               exec "$dir/lib/todo.sh" "$@" ;;
+  tg)                 exec "$dir/lib/tg.sh" "$@" ;;
+  clear)              exec "$dir/lib/clear.sh" "$@" ;;
   ""|help|-h|--help)  usage ;;
   *)
     echo "gh pr-tools: unknown command '$cmd'" >&2

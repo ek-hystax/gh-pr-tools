@@ -14,7 +14,7 @@ force=0
 [ "${1:-}" = "-y" ] || [ "${1:-}" = "--yes" ] && force=1
 
 if [ "$force" -ne 1 ]; then
-  read -rp "Remove $config_dir (config + tg map)? [y/N] " reply
+  read -rp "Remove $config_dir (profiles + tg map)? [y/N] " reply
   case "$reply" in
     y|Y|yes|YES) ;;
     *) echo "Aborted."; exit 1 ;;

@@ -6,7 +6,7 @@ dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$dir/common.sh"
 load_config
 
-me=$(gh api user --jq .login)
+me="${GH_USERNAME:-$(gh api user --jq .login)}"
 ticket_pattern="${JIRA_PREFIX:-[A-Za-z]+}-[0-9]+"
 
 gh pr list --repo "$REPO" --search "review-requested:@me is:open -is:draft" \
