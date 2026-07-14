@@ -186,6 +186,7 @@ resolve_pr() {
   # Jira link -> the ticket is always the last path segment
   if [[ "$arg" =~ ^https?:// ]]; then
     arg="${arg%%\?*}"
+    arg="${arg%%#*}"
     arg="${arg%/}"
     arg="${arg##*/}"
     if ! [[ "$arg" =~ ^${ticket_pattern}$ ]]; then
