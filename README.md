@@ -12,6 +12,7 @@ gh pr-tools init
 ```
 
 `init` creates a **named profile** and asks for:
+
 - **profile name** — defaults to the short repo name (the part after `/`)
 - **repo** (`owner/name`) — defaults to the repo of your current checkout if run inside one
 - **org** — used to expand team review requests (e.g. a PR requesting review from the `ui` team) into individual members
@@ -46,6 +47,7 @@ gh pr-tools profile remove side
 ```
 
 Team-review expansion additionally needs the `read:org` scope:
+
 ```
 gh auth refresh -s read:org
 ```
@@ -69,6 +71,27 @@ gh pr-tools -p work prd 886
 
 Lists open PRs where you're a pending reviewer, as a table with CI/merge
 status, size, and age.
+
+### `gh pr-tools notify <pr-number | TICKET-123 | jira-link | branch-name>`
+
+Polls a PR's CI checks every 5 seconds (accepting the same PR arguments as
+`prd`) and stops once every check reaches a terminal state, printing a live
+status line in the meantime:
+
+```
+gh pr-tools notify 886
+gh pr-tools notify KF-1309
+gh pr-tools notify bug/KF-1309
+```
+
+Exits `0` when all checks pass, `1` if any check failed — so it composes with
+`&&`/`||` (e.g. `gh pr-tools notify 886 && git checkout main`). Runs until the
+checks finish or you `Ctrl-C`.
+
+On macOS it additionally fires a native desktop notification when the checks
+finish ("CI passed" on pass, "CI failed" on failure), so you can tab away.
+On other platforms (e.g. Linux) the command still polls and prints the same
+terminal status/result — it just doesn't pop a notification.
 
 ### `gh pr-tools profile list|show|remove`
 
@@ -135,6 +158,7 @@ lib/
   profile.sh           gh pr-tools profile
   prd.sh / prd.jq       gh pr-tools prd
   todo.sh / todo.jq     gh pr-tools todo
+  notify.sh / notify.jq gh pr-tools notify
   tg.sh                 gh pr-tools tg
   clear.sh              gh pr-tools clear
 ```

@@ -16,6 +16,7 @@ commands:
   profile remove <name>             delete a profile
   prd <pr|TICKET-123|link|branch>   show a PR's approvers and pending reviewers
   todo                              list open PRs where you're a pending reviewer
+  notify <pr|TICKET-123|link|branch>  poll a PR's CI every 5s, macOS notify when done
   tg add <login> <handle>           map a GitHub login to a Telegram handle
   tg remove <login>
   tg list
@@ -56,6 +57,7 @@ case "$cmd" in
   profile)            exec "$dir/lib/profile.sh" "$@" ;;
   prd)                exec "$dir/lib/prd.sh" "$@" ;;
   todo)               exec "$dir/lib/todo.sh" "$@" ;;
+  notify)             exec "$dir/lib/notify.sh" "$@" ;;
   tg)                 exec "$dir/lib/tg.sh" "$@" ;;
   clear)              exec "$dir/lib/clear.sh" "$@" ;;
   ""|help|-h|--help)  usage ;;

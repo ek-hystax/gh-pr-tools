@@ -163,6 +163,49 @@ assert_repo_unique() {
   done < <(list_profile_names)
 }
 
+pick_one() { # stdin: JSON array of {number, title}; $1: what we searched for
+  local matches count
+  matches=$(cat)
+  count=$(jq 'length' <<<"$matches")
+  if [ "$count" -eq 0 ]; then
+    echo "gh pr-tools: no open PR found for $1" >&2
+    exit 1
+  elif [ "$count" -gt 1 ]; then
+    echo "gh pr-tools: multiple open PRs match $1:" >&2
+    jq -r '.[] | "  #\(.number)  \(.title)"' <<<"$matches" >&2
+    exit 1
+  fi
+  jq -r '.[0].number' <<<"$matches"
+}
+
+# Resolve a PR argument (bare number / TICKET-123 / Jira link / branch name)
+# to a PR number. Callers must have set $REPO (via load_config) and
+# $ticket_pattern before calling.
+resolve_pr() {
+  local arg="$1" ticket
+  # Jira link -> the ticket is always the last path segment
+  if [[ "$arg" =~ ^https?:// ]]; then
+    arg="${arg%%\?*}"
+    arg="${arg%/}"
+    arg="${arg##*/}"
+    if ! [[ "$arg" =~ ^${ticket_pattern}$ ]]; then
+      echo "gh pr-tools: could not extract a ticket from link $1" >&2
+      exit 1
+    fi
+  fi
+  if [[ "$arg" =~ ^[0-9]+$ ]]; then
+    echo "$arg"
+  elif [[ "$arg" =~ ^${ticket_pattern}$ ]]; then
+    ticket=$(tr '[:lower:]' '[:upper:]' <<<"$arg")
+    gh pr list --repo "$REPO" --search "$ticket in:title" --json number,title \
+      | jq --arg t "$ticket" '[.[] | select(.title | test("\\b" + $t + "\\b"; "i"))]' \
+      | pick_one "ticket $ticket"
+  else
+    gh pr list --repo "$REPO" --head "$arg" --json number,title \
+      | pick_one "branch $arg"
+  fi
+}
+
 load_config() {
   local name path
   name=$(resolve_profile)
