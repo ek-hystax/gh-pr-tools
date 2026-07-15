@@ -8,7 +8,37 @@ A [gh](https://cli.github.com/) extension for PR review triage.
 
 Optional Telegram links next to reviewer names, and Jira ticket links from titles/branches. Multi-repo via named profiles. Bash + jq only — no other runtime.
 
-## Install
+## Getting Started
+
+### 1. Install gh
+
+macOS:
+
+```bash
+brew install gh
+```
+
+[Ubuntu/Debian](https://github.com/cli/cli/blob/trunk/docs/install_linux.md#debian):
+
+```bash
+(type -p wget >/dev/null || (sudo apt update && sudo apt install wget -y)) \
+	&& sudo mkdir -p -m 755 /etc/apt/keyrings \
+	&& out=$(mktemp) && wget -nv -O$out https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+	&& cat $out | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
+	&& sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+	&& sudo mkdir -p -m 755 /etc/apt/sources.list.d \
+	&& echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+	&& sudo apt update \
+	&& sudo apt install gh -y
+```
+
+Then authenticate:
+
+```bash
+gh auth login
+```
+
+### 2. Install the extension
 
 ```bash
 gh extension install ek-hystax/gh-pr-tools
@@ -34,13 +64,44 @@ Team-review expansion needs the `read:org` scope:
 gh auth refresh -s read:org
 ```
 
-### Upgrade
+### 3. First use
+
+Who's approved a PR, and who's still pending:
+
+```bash
+gh pr-tools prd 886
+```
+
+Open PRs waiting on your review:
+
+```bash
+gh pr-tools todo
+```
+
+Watch a PR's CI until it finishes (desktop notification on macOS):
+
+```bash
+gh pr-tools notify 886
+```
+
+See [Commands](#commands) below for the full option list and more ways to reference a PR (Jira ticket, Jira link, branch name).
+
+### 4. Update or uninstall
+
+Update to the latest published version:
 
 ```bash
 gh extension upgrade pr-tools
 ```
 
-Pulls the latest published version. If you installed from a local checkout (`gh extension install .`), the extension is a symlink to your working copy and always runs the current code — nothing to upgrade.
+If you installed from a local checkout (`gh extension install .`), the extension is a symlink to your working copy and always runs the current code — nothing to upgrade.
+
+Uninstall completely (removes the extension and all local config — profiles + Telegram map):
+
+```bash
+gh pr-tools clear -y
+gh extension remove pr-tools
+```
 
 ### Profiles (multi-repo)
 
