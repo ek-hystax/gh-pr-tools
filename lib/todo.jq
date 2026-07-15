@@ -1,27 +1,8 @@
+include "common";
+
 # Inputs supplied by todo.sh: $me, $jiraBase, $jiraPattern, $long
 
-# ANSI
-def c($code): "\u001b[\($code)m\(.)\u001b[0m";
-def green:  c("32");
-def cyan:   c("36");
-def dim:    c("2");
-def yellow: c("33");
-def red:    c("31");
-
 def yn($b): if $b then "yes" else "-" end;
-
-def relTime($ts):
-  (now - $ts) as $d
-  | if   $d < 45      then "just now"
-    elif $d < 3600    then "\(($d / 60) | floor)m ago"
-    elif $d < 86400   then "\(($d / 3600) | floor)h ago"
-    elif $d < 604800  then "\(($d / 86400) | floor)d ago"
-    elif $d < 2592000 then "\(($d / 604800) | floor)w ago"
-    else                   "\(($d / 2592000) | floor)mo ago"
-    end;
-
-def isoRel($at):
-  if $at == null then "-" else ($at | fromdateiso8601 | relTime(.)) end;
 
 # PR fields
 def mine:
@@ -43,17 +24,6 @@ def stillNeedsMe:
   mine as $m
   | $m == null or $m.state != "APPROVED" or needsRereview;
 
-def jira:
-  if $jiraBase == "" then "-"
-  else
-    (.headRefName // "") as $branch
-    | ("(?<t>" + $jiraPattern + ")") as $re
-    | if ($branch | test($re))
-      then "\($jiraBase)/\($branch | capture($re).t)"
-      else "-"
-      end
-  end;
-
 def size:
   "\(.changedFiles // 0)f +\(.additions // 0)/-\(.deletions // 0)";
 
@@ -61,19 +31,6 @@ def sizePaint:
   "\(.changedFiles // 0 | tostring | . + "f" | cyan)"
   + " +\(.additions // 0 | tostring | green)"
   + "/\("-" + (.deletions // 0 | tostring) | red)";
-
-def ciFail($c): $c.conclusion | IN("FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED");
-def ciPending($c):
-  ($c.status | IN("IN_PROGRESS", "QUEUED", "PENDING"))
-  or ($c.status == "COMPLETED" and $c.conclusion == null);
-
-def ci:
-  (.statusCheckRollup // []) as $checks
-  | if ($checks | length) == 0 then "-"
-    elif any($checks[] | ciFail(.)) then "fail"
-    elif any($checks[] | ciPending(.)) then "pending"
-    else "pass"
-    end;
 
 def merge:
   if .mergeable == "CONFLICTING" then "conflict"
@@ -94,10 +51,10 @@ def cells:
     isoRel(.createdAt),
     yn(needsRereview),
     size,
-    ci,
+    ciState,
     merge,
     .url,
-    jira
+    jiraFromBranch($jiraBase; $jiraPattern)
   ];
 
 def headers:
@@ -114,12 +71,6 @@ def paintMine:
   elif startswith("commented") then cyan
   elif . == "-" then dim
   else yellow end;
-
-def paintCi:
-  if . == "pass" then green
-  elif . == "fail" then red
-  elif . == "pending" then yellow
-  else dim end;
 
 def paintMerge:
   if IN("conflict", "dirty", "blocked") then red

@@ -4,6 +4,7 @@ A [gh](https://cli.github.com/) extension for PR review triage.
 
 - `prd` — who has approved a PR, and who still needs to
 - `todo` — open PRs waiting on your review
+- `mine` — your own open PRs: review status, approvals, unresolved comments, CI
 - `notify` — poll CI until it finishes (macOS desktop notification when done)
 
 Optional Telegram links next to reviewer names, and Jira ticket links from titles/branches. Multi-repo via named profiles. Bash + jq only — no other runtime.
@@ -78,6 +79,12 @@ Open PRs waiting on your review:
 gh pr-tools todo
 ```
 
+Your own open PRs — review status, approvals, unresolved comments, CI:
+
+```bash
+gh pr-tools mine
+```
+
 Watch a PR's CI until it finishes (desktop notification on macOS):
 
 ```bash
@@ -105,7 +112,7 @@ gh extension remove pr-tools
 
 ### Profiles (multi-repo)
 
-One install, several profiles (typically one per repo). Resolution for `prd` / `todo` / `notify`:
+One install, several profiles (typically one per repo). Resolution for `prd` / `todo` / `mine` / `notify`:
 
 1. `gh pr-tools --profile NAME …` / `-p NAME` (always wins)
 2. Else you must be inside a git checkout whose `owner/name` matches exactly one profile's `REPO`:
@@ -134,6 +141,7 @@ Jira integration is optional (`JIRA_BASE_URL` blank → no links). When enabled,
 | Look up a PR by branch (`prd bug/KF-1309`)               | Pass the exact head branch name; no ticket needed in the name for this path               |
 | Show a Jira link in `prd` output                         | Ticket key in the **branch name or title** (e.g. `feature/KF-1309-login` or `KF-1309: …`) |
 | Show a Jira link in `todo` output                        | Ticket key in the **branch name** (title alone is not enough for `todo`)                  |
+| Show a Jira link in `mine` output                        | Ticket key in the **branch name** (same convention as `todo`)                             |
 
 Ticket shape is `PREFIX-123`. If you set a Jira prefix at init (e.g. `KF`), only that prefix matches; leave it blank to accept any `PROJECT-123`-style key.
 
@@ -172,6 +180,22 @@ gh pr-tools todo [--long]
 ```
 
 Lists open PRs where you're a pending reviewer. By default shows a compact table (PR, title, author, your review state, URL); pass `--long` for all columns, adding decision, updated/age, re-review, size, CI, merge status, and Jira link.
+
+### `mine` — your own open PRs
+
+```text
+gh pr-tools mine [--long]
+```
+
+Lists your own open, non-draft PRs with the columns you need to triage them: review status (Approved / Changes requested / Pending review), unresolved review-comment count, number of approvals, CI status, PR URL, and Jira link (same branch-name convention as `todo`). Pass `--long` to add updated/age, size, and merge status.
+
+```bash
+gh pr-tools mine
+gh pr-tools mine --long
+gh pr-tools -p work mine
+```
+
+Unresolved review-comment counts aren't exposed by GitHub's `--json` convenience fields, so `mine` makes one extra GraphQL call per open, non-draft PR to fetch it — a bit slower than `todo`/`prd` if you have a lot of PRs open at once, but negligible for a normal workload.
 
 ### `notify` — watch CI
 
@@ -247,10 +271,12 @@ gh extension remove pr-tools
 gh-pr-tools             entry point — dispatches subcommands (required gh-extension filename)
 lib/
   common.sh             profile resolution + tg-map loading
+  common.jq             shared jq helpers (ANSI colors, relTime, jira link, CI state) — included via `include "common";` from todo.jq/prd.jq/mine.jq
   init.sh               gh pr-tools init
   profile.sh            gh pr-tools profile
   prd.sh / prd.jq       gh pr-tools prd
   todo.sh / todo.jq     gh pr-tools todo
+  mine.sh / mine.jq     gh pr-tools mine
   notify.sh / notify.jq gh pr-tools notify
   tg.sh                 gh pr-tools tg
   clear.sh              gh pr-tools clear

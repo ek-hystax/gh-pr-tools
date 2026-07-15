@@ -1,41 +1,10 @@
+include "common";
+
 # Inputs supplied by prd.sh: $teamMembers, $tgmap, $jiraBase, $jiraPattern
 
 def tglink($login):
   ($tgmap[$login] // "") as $u
   | if $u == "" then "-" else "https://t.me/\($u)" end;
-
-# ANSI
-def c($code): "\u001b[\($code)m\(.)\u001b[0m";
-def green:  c("32");
-def cyan:   c("36");
-def dim:    c("2");
-def yellow: c("33");
-def red:    c("31");
-
-def relTime($ts):
-  (now - $ts) as $d
-  | if   $d < 45      then "just now"
-    elif $d < 3600    then "\(($d / 60) | floor)m ago"
-    elif $d < 86400   then "\(($d / 3600) | floor)h ago"
-    elif $d < 604800  then "\(($d / 86400) | floor)d ago"
-    elif $d < 2592000 then "\(($d / 604800) | floor)w ago"
-    else                   "\(($d / 2592000) | floor)mo ago"
-    end;
-
-def isoRel($at):
-  if $at == null then "-" else ($at | fromdateiso8601 | relTime(.)) end;
-
-# Ticket from branch name, falling back to PR title
-def jira:
-  if $jiraBase == "" then "-"
-  else
-    "\(.headRefName // "") \(.title // "")" as $s
-    | ("(?<t>" + $jiraPattern + ")") as $re
-    | if ($s | test($re))
-      then "\($jiraBase)/\($s | capture($re).t)"
-      else "-"
-      end
-  end;
 
 def paintDecision:
   if startswith("APPROVED") then green
@@ -52,10 +21,7 @@ def paintReason:
 | .author.login as $author
 
 # Latest submitted review per reviewer (PR author and pending drafts excluded)
-| ([ $pr.reviews[]?
-     | select(.author != null and .author.login != $author and .state != "PENDING") ]
-   | group_by(.author.login)
-   | map(sort_by(.submittedAt) | last)
+| ($pr | latestReviews($author)
    | map({key: .author.login, value: {state, submittedAt}})
    | from_entries) as $latest
 
@@ -105,7 +71,7 @@ def paintReason:
   ( "\("author:" | dim) \($pr.author.login | cyan)   \("updated:" | dim) \(isoRel($pr.updatedAt))   \("decision:" | dim) \($pr.reviewDecision // "PENDING" | paintDecision)" ),
   "",
   ( "\("PR:" | dim) \($pr.url)" ),
-  ( "\("Jira:" | dim) \($pr | jira)" ),
+  ( "\("Jira:" | dim) \($pr | jiraFromBranchOrTitle($jiraBase; $jiraPattern))" ),
   ( "\("Branch:" | dim) \($pr.headRefName // "-") -> \($pr.baseRefName // "-")" ),
   "",
   ( if ($approved | length) == 0

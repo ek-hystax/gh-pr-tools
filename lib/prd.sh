@@ -27,7 +27,7 @@ for slug in $(jq -r '[.reviewRequests[]? | .slug // empty | split("/") | last] |
   members=$(jq --arg t "$slug" --argjson m "$m" '. + {($t): $m}' <<<"$members")
 done
 
-jq -r \
+jq -r -L "$dir" \
   --argjson teamMembers "$members" \
   --argjson tgmap "$(tgmap_json)" \
   --arg jiraBase "${JIRA_BASE_URL:-}" \

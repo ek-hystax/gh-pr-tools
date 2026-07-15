@@ -16,6 +16,7 @@ commands:
   profile remove <name>             delete a profile
   prd <pr|TICKET-123|link|branch>   show a PR's approvers and pending reviewers
   todo [--long]                     list open PRs where you're a pending reviewer (--long: all columns)
+  mine [--long]                     list your own open PRs (--long: all columns)
   notify <pr|TICKET-123|link|branch>  poll a PR's CI every 5s, macOS notify when done
   tg add <login> <handle>           map a GitHub login to a Telegram handle
   tg remove <login>
@@ -24,7 +25,7 @@ commands:
   tg import --json [file]           bulk add from a {"login": "handle"} JSON file (or stdin)
   clear [-y|--yes]                  remove all config created by init/tg (prompts unless -y)
 
-Profile resolution (for prd/todo): --profile, else match by repo inside a git checkout (must be in git; run init if unmatched).
+Profile resolution (for prd/todo/mine): --profile, else match by repo inside a git checkout (must be in git; run init if unmatched).
 Telegram map is shared across profiles.
 EOF
 }
@@ -57,6 +58,7 @@ case "$cmd" in
   profile)            exec "$dir/lib/profile.sh" "$@" ;;
   prd)                exec "$dir/lib/prd.sh" "$@" ;;
   todo)               exec "$dir/lib/todo.sh" "$@" ;;
+  mine)               exec "$dir/lib/mine.sh" "$@" ;;
   notify)             exec "$dir/lib/notify.sh" "$@" ;;
   tg)                 exec "$dir/lib/tg.sh" "$@" ;;
   clear)              exec "$dir/lib/clear.sh" "$@" ;;
