@@ -16,9 +16,14 @@ done
 
 me="${GH_USERNAME:-$(gh api user --jq .login)}"
 ticket_pattern="${JIRA_PREFIX:-[A-Za-z]+}-[0-9]+"
+fields="number,title,author,reviewDecision,reviews,reviewRequests,headRefName,url,changedFiles,additions,deletions,updatedAt,createdAt,mergeable,mergeStateStatus,statusCheckRollup"
 
-gh pr list --repo "$REPO" --search "review-requested:@me is:open -is:draft" \
-  --json number,title,author,reviewDecision,reviews,headRefName,url,changedFiles,additions,deletions,updatedAt,createdAt,mergeable,mergeStateStatus,statusCheckRollup \
+# involves:@me covers author/assignee/mentions/commenter/review-requested in
+# one search — broader than plain "review-requested" (which drops you as
+# soon as you submit any review, even a comment-only one). todo.jq's
+# stillNeedsMe filters back down to PRs where you're an actual reviewer.
+gh pr list --repo "$REPO" --search "involves:@me is:open -is:draft -author:@me" \
+  --json "$fields" \
   | jq -rn -L "$dir" \
       --arg me "$me" \
       --arg jiraBase "${JIRA_BASE_URL:-}" \

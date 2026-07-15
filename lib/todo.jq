@@ -19,10 +19,16 @@ def needsRereview:
   | ($m.submittedAt // null) != null
     and ((.updatedAt | fromdateiso8601) > ($m.submittedAt | fromdateiso8601));
 
-# Keep comments / changes-requested; drop stale approvals
+def requestedFromMe:
+  [ .reviewRequests[]? | select(.login == $me) ] | length > 0;
+
+# Only PRs where I'm an actual reviewer (currently requested, or I've left
+# a review): keep pending requests, comments, changes-requested; drop
+# stale approvals.
 def stillNeedsMe:
   mine as $m
-  | $m == null or $m.state != "APPROVED" or needsRereview;
+  | ($m != null or requestedFromMe)
+    and ($m == null or $m.state != "APPROVED" or needsRereview);
 
 def size:
   "\(.changedFiles // 0)f +\(.additions // 0)/-\(.deletions // 0)";
