@@ -98,10 +98,10 @@ gh pr-tools -p work prd 886
 ### `todo` — PRs waiting on you
 
 ```text
-gh pr-tools todo
+gh pr-tools todo [--long]
 ```
 
-Lists open PRs where you're a pending reviewer, as a table with CI/merge status, size, and age.
+Lists open PRs where you're a pending reviewer. By default shows a compact table (PR, title, author, your review state, URL); pass `--long` for all columns, adding decision, updated/age, re-review, size, CI, merge status, and Jira link.
 
 ### `notify` — watch CI
 

@@ -1,4 +1,4 @@
-# Inputs supplied by todo.sh: $me, $jiraBase, $jiraPattern
+# Inputs supplied by todo.sh: $me, $jiraBase, $jiraPattern, $long
 
 # ANSI
 def c($code): "\u001b[\($code)m\(.)\u001b[0m";
@@ -138,23 +138,30 @@ def paint($i):
   elif $i == 5 or $i == 6 or $i == 11 or $i == 12 then dim
   else . end;
 
+# Columns shown by default vs --long (indexes into cells/headers)
+def cols:
+  if $long then [range(0; headers | length)]
+  else [0, 1, 2, 4, 11]  # PR, TITLE, AUTHOR, MINE, URL
+  end;
+
 # Main
 [inputs]
+| cols as $cols
 | (.[0] | map(select(stillNeedsMe)) | sort_by(.updatedAt)) as $rows
-| ([$rows[] | cells]) as $plain
-| ( [headers] + $plain | transpose | map(map(length) | max) ) as $w
+| ([$rows[] | cells as $all | [$cols[] | $all[.]]]) as $plain
+| ( [[$cols[] | headers[.]]] + $plain | transpose | map(map(length) | max) ) as $w
 | def pad($i): . + (" " * ($w[$i] - length));
 
-( [range(0; headers | length) as $i | (headers[$i] | pad($i))] | join("  ") | dim ),
+( [range(0; $cols | length) as $i | (headers[$cols[$i]] | pad($i))] | join("  ") | dim ),
 
 ( range(0; $rows | length) as $r
   | $rows[$r] as $pr
   | $plain[$r] as $c
   | [ range(0; $c | length) as $i
-      | if $i == 8 then
-          ($pr | sizePaint) + (" " * ($w[8] - ($c[8] | length)))
+      | if $cols[$i] == 8 then
+          ($pr | sizePaint) + (" " * ($w[$i] - ($c[$i] | length)))
         else
-          ($c[$i] | paint($i)) + (" " * ($w[$i] - ($c[$i] | length)))
+          ($c[$i] | paint($cols[$i])) + (" " * ($w[$i] - ($c[$i] | length)))
         end
     ]
   | join("  ")
