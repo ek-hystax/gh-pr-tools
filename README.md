@@ -1,10 +1,10 @@
 # gh-pr-tools
 
-A [`gh`](https://cli.github.com/) extension for PR review triage.
+A [gh](https://cli.github.com/) extension for PR review triage.
 
-- **`prd`** — who has approved a PR, and who still needs to
-- **`todo`** — open PRs waiting on your review
-- **`notify`** — poll CI until it finishes (macOS desktop notification when done)
+- `prd` — who has approved a PR, and who still needs to
+- `todo` — open PRs waiting on your review
+- `notify` — poll CI until it finishes (macOS desktop notification when done)
 
 Optional Telegram links next to reviewer names, and Jira ticket links from titles/branches. Multi-repo via named profiles. Bash + jq only — no other runtime.
 
@@ -34,15 +34,24 @@ Team-review expansion needs the `read:org` scope:
 gh auth refresh -s read:org
 ```
 
+### Upgrade
+
+```bash
+gh extension upgrade pr-tools
+```
+
+Pulls the latest published version. If you installed from a local checkout (`gh extension install .`), the extension is a symlink to your working copy and always runs the current code — nothing to upgrade.
+
 ### Profiles (multi-repo)
 
 One install, several profiles (typically one per repo). Resolution for `prd` / `todo` / `notify`:
 
 1. `gh pr-tools --profile NAME …` / `-p NAME` (always wins)
 2. Else you must be inside a git checkout whose `owner/name` matches exactly one profile's `REPO`:
-   - Not in a git checkout → error (run `gh pr-tools init`)
-   - No matching profile (or `gh` can't resolve the repo) → error (run `gh pr-tools init`)
-   - More than one match → error naming the conflicts (pass `--profile NAME`)
+
+- Not in a git checkout → error (run `gh pr-tools init`)
+- No matching profile (or `gh` can't resolve the repo) → error (run `gh pr-tools init`)
+- More than one match → error naming the conflicts (pass `--profile NAME`)
 
 The Telegram map (`tg-map.json`) is **shared** across all profiles.
 
@@ -57,13 +66,13 @@ gh pr-tools profile remove side
 
 Jira integration is optional (`JIRA_BASE_URL` blank → no links). When enabled, tickets must appear in the PR so the tools can connect them.
 
-| Goal | Requirement |
-| --- | --- |
-| Look up a PR by ticket (`prd KF-1309`, `notify KF-1309`) | Ticket key is in the **PR title** as its own word (e.g. `KF-1309: fix login`) |
-| Look up a PR by Jira browse URL | Same — URL's last path segment is treated as the ticket, then matched on title |
-| Look up a PR by branch (`prd bug/KF-1309`) | Pass the exact head branch name; no ticket needed in the name for this path |
-| Show a Jira link in `prd` output | Ticket key in the **branch name or title** (e.g. `feature/KF-1309-login` or `KF-1309: …`) |
-| Show a Jira link in `todo` output | Ticket key in the **branch name** (title alone is not enough for `todo`) |
+| Goal                                                     | Requirement                                                                               |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Look up a PR by ticket (`prd KF-1309`, `notify KF-1309`) | Ticket key is in the **PR title** as its own word (e.g. `KF-1309: fix login`)             |
+| Look up a PR by Jira browse URL                          | Same — URL's last path segment is treated as the ticket, then matched on title            |
+| Look up a PR by branch (`prd bug/KF-1309`)               | Pass the exact head branch name; no ticket needed in the name for this path               |
+| Show a Jira link in `prd` output                         | Ticket key in the **branch name or title** (e.g. `feature/KF-1309-login` or `KF-1309: …`) |
+| Show a Jira link in `todo` output                        | Ticket key in the **branch name** (title alone is not enough for `todo`)                  |
 
 Ticket shape is `PREFIX-123`. If you set a Jira prefix at init (e.g. `KF`), only that prefix matches; leave it blank to accept any `PROJECT-123`-style key.
 
@@ -133,9 +142,9 @@ gh pr-tools profile show [name]
 gh pr-tools profile remove <name>
 ```
 
-- **`list`** — all profiles; marks a checkout match with `(cwd)`
-- **`show [name]`** — print settings (default: currently resolved profile)
-- **`remove <name>`** — delete a profile
+- `list` — all profiles; marks a checkout match with `(cwd)`
+- `show [name]` — print settings (default: currently resolved profile)
+- `remove <name>` — delete a profile
 
 ### `tg` — Telegram map
 
