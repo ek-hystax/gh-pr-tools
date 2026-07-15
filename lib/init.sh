@@ -34,7 +34,9 @@ username="${username:-$default_username}"
 [ -n "$username" ] || { echo "gh pr-tools: GitHub username is required" >&2; exit 1; }
 
 read -rp "Jira ticket prefix, e.g. KF (blank = match any PROJECT-123 style ticket): " prefix
-read -rp "Jira base browse URL, e.g. https://yourorg.atlassian.net/browse (blank = no Jira links): " jira_base
+read -rp "Jira org, e.g. yourorg → https://yourorg.atlassian.net/browse (blank = no Jira links): " jira_org
+jira_base=""
+[ -n "$jira_org" ] && jira_base="https://${jira_org}.atlassian.net/browse"
 
 path=$(profile_path "$name")
 {

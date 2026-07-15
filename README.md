@@ -54,7 +54,7 @@ gh pr-tools init
 | **org**                  | Expands team review requests (e.g. the `ui` team) into individual members    |
 | **your GitHub username** | Defaults to your `gh` login; required                                        |
 | **Jira ticket prefix**   | e.g. `KF` — leave blank to match any `PROJECT-123`-style ticket              |
-| **Jira base browse URL** | e.g. `https://yourorg.atlassian.net/browse` — leave blank to skip Jira links |
+| **Jira org**             | e.g. `yourorg` → builds `https://yourorg.atlassian.net/browse` — leave blank to skip Jira links |
 
 Settings go to `~/.config/gh-pr-tools/profiles/<name>.sh`. Re-run `gh pr-tools init` anytime to add another profile or overwrite an existing one.
 
