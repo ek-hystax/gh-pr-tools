@@ -19,6 +19,18 @@ def needsRereview:
   | ($m.submittedAt // null) != null
     and ((.updatedAt | fromdateiso8601) > ($m.submittedAt | fromdateiso8601));
 
+# No "review requested at" timestamp exists via the API, so proxy it: PR age
+# if unreviewed (or only a draft review), time since the push if new commits
+# landed since my review, else time since my own last review.
+def waitingSince:
+  mine as $m
+  | if ($m == null or $m.submittedAt == null) then .createdAt
+    elif needsRereview then .updatedAt
+    else $m.submittedAt
+    end;
+
+def waitingPaint: waitingPaintFor(waitingSince);
+
 # Matches both a direct request (.login == $me) and a team request where
 # $me is a member of the requested team (.slug, resolved via $teamMembers).
 def requestedFromMe:
@@ -78,6 +90,7 @@ def cells:
     DECISION:   decision,
     MINE:       mineState,
     UNRESOLVED: unresolvedCell($unresolved),
+    WAITING:    isoRel(waitingSince),
     UPDATED:    isoRel(.updatedAt),
     AGE:        isoRel(.createdAt),
     RE_REVIEW:  yn(needsRereview),
@@ -91,10 +104,12 @@ def cells:
 def headers:
   {
     PR: "PR", TITLE: "TITLE", AUTHOR: "AUTHOR", DECISION: "DECISION", MINE: "MINE",
-    UNRESOLVED: "UNRESOLVED", UPDATED: "UPDATED", AGE: "AGE", RE_REVIEW: "RE-REVIEW",
+    UNRESOLVED: "UNRESOLVED", WAITING: "WAITING", UPDATED: "UPDATED", AGE: "AGE", RE_REVIEW: "RE-REVIEW",
     SIZE: "SIZE", CI: "CI", MERGE: "MERGE", URL: "URL", JIRA: "JIRA"
   };
 
+# SIZE, UNRESOLVED, WAITING need the raw PR object, not cell text, so the
+# render loop special-cases them instead of routing through paint($col).
 def paint($col):
   if   $col == "PR" then green
   elif $col == "AUTHOR" then cyan
@@ -108,8 +123,8 @@ def paint($col):
 
 # UNRESOLVED sits right after MINE in both column sets, rather than at the end.
 def cols:
-  if $long then ["PR", "TITLE", "AUTHOR", "DECISION", "MINE", "UNRESOLVED", "UPDATED", "AGE", "RE_REVIEW", "SIZE", "CI", "MERGE", "URL", "JIRA"]
-  else ["PR", "TITLE", "AUTHOR", "MINE", "UNRESOLVED", "URL"]
+  if $long then ["PR", "TITLE", "AUTHOR", "DECISION", "MINE", "UNRESOLVED", "WAITING", "UPDATED", "AGE", "RE_REVIEW", "SIZE", "CI", "MERGE", "URL", "JIRA"]
+  else ["PR", "TITLE", "AUTHOR", "MINE", "UNRESOLVED", "WAITING", "URL"]
   end;
 
 # Main
@@ -130,6 +145,8 @@ def cols:
           ($pr | sizePaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "UNRESOLVED" then
           ($pr | unresolvedPaint($unresolved)) + (" " * ($w[$i] - ($c[$i] | length)))
+        elif $cols[$i] == "WAITING" then
+          ($pr | waitingPaint) + (" " * ($w[$i] - ($c[$i] | length)))
         else
           ($c[$i] | paint($cols[$i])) + (" " * ($w[$i] - ($c[$i] | length)))
         end

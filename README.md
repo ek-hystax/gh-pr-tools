@@ -179,9 +179,11 @@ gh pr-tools -p work prd 886
 gh pr-tools todo [--long]
 ```
 
-Lists open PRs where you're a pending reviewer. By default shows a compact table (PR, title, author, your review state, unresolved comments, URL); pass `--long` for all columns, adding decision, updated/age, re-review, size, CI, merge status, and Jira link.
+Lists open PRs where you're a pending reviewer. By default shows a compact table (PR, title, author, your review state, unresolved comments, how long it's been waiting on you, URL); pass `--long` for all columns, adding decision, last-updated, age, re-review, size, CI, merge status, and Jira link.
 
 The unresolved-comments column shows a `<mine> mine / <theirs> theirs` breakdown — review threads you opened that are still unresolved, versus ones the author or another reviewer opened. A thread is attributed to whoever left its opening comment, not every participant. Shows `-` when there's nothing unresolved.
+
+The `WAITING` column is color-graded by how long a review has been outstanding on you — dim under a day, plain 1–3 days, yellow 3–7 days, bold red past a week — so the oldest unaddressed reviews stand out by default. `--long`'s `UPDATED` column is different: the PR's raw last-activity time, not specific to your own review.
 
 ### `mine` — your own open PRs
 
@@ -189,7 +191,7 @@ The unresolved-comments column shows a `<mine> mine / <theirs> theirs` breakdown
 gh pr-tools mine [--long]
 ```
 
-Lists your own open, non-draft PRs with the columns you need to triage them: review status (Approved / Changes requested / Pending review), unresolved review comments, number of approvals, CI status, PR URL, and Jira link (same branch-name convention as `todo`). Pass `--long` to add updated/age, size, and merge status.
+Lists your own open, non-draft PRs with the columns you need to triage them: review status (Approved / Changes requested / Pending review), unresolved review comments, how long it's been waiting (`WAITING`, same color grading as `todo`), number of approvals, CI status, PR URL, and Jira link (same branch-name convention as `todo`). Pass `--long` to add age, size, and merge status.
 
 The unresolved-comments column shows a `<mine> mine / <theirs> theirs` breakdown — threads you opened yourself that are still unresolved, versus ones a reviewer opened. A thread is attributed to whoever left its opening comment, not every participant. Shows `-` when there's nothing unresolved.
 

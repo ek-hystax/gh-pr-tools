@@ -12,6 +12,7 @@ def cyan:   c("36");
 def dim:    c("2");
 def yellow: c("33");
 def red:    c("31");
+def boldRed: c("1;31");
 
 def relTime($ts):
   (now - $ts) as $d
@@ -25,6 +26,21 @@ def relTime($ts):
 
 def isoRel($at):
   if $at == null then "-" else ($at | fromdateiso8601 | relTime(.)) end;
+
+# Escalating color by elapsed seconds: <1d/1-3d/3-7d/7d+. 1d/7d boundaries
+# match relTime's own bucket edges.
+def waitPaint($seconds):
+  if   $seconds < 86400  then dim
+  elif $seconds < 259200 then .
+  elif $seconds < 604800 then yellow
+  else boldRed
+  end;
+
+def waitingPaintFor($sinceIso):
+  isoRel($sinceIso) as $text
+  | if $sinceIso == null then ($text | dim)
+    else ($text | waitPaint(now - ($sinceIso | fromdateiso8601)))
+    end;
 
 # Ticket from branch name only (todo/mine convention)
 def jiraFromBranch($jiraBase; $jiraPattern):

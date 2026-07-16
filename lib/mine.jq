@@ -19,6 +19,8 @@ def approvals:
 def ci: ciState;
 def jira: jiraFromBranch($jiraBase; $jiraPattern);
 
+def waitingPaint: waitingPaintFor(.updatedAt);
+
 def size:
   "\(.changedFiles // 0)f +\(.additions // 0)/-\(.deletions // 0)";
 
@@ -51,7 +53,7 @@ def cells:
     CI:         ci,
     URL:        .url,
     JIRA:       jira,
-    UPDATED:    isoRel(.updatedAt),
+    WAITING:    isoRel(.updatedAt),
     AGE:        isoRel(.createdAt),
     SIZE:       size,
     MERGE:      merge
@@ -61,20 +63,22 @@ def headers:
   {
     PR: "PR", TITLE: "TITLE", STATUS: "STATUS", UNRESOLVED: "UNRESOLVED",
     APPROVALS: "APPROVALS", CI: "CI", URL: "URL", JIRA: "JIRA",
-    UPDATED: "UPDATED", AGE: "AGE", SIZE: "SIZE", MERGE: "MERGE"
+    WAITING: "WAITING", AGE: "AGE", SIZE: "SIZE", MERGE: "MERGE"
   };
 
+# SIZE, UNRESOLVED, WAITING need the raw PR object, not cell text, so the
+# render loop special-cases them instead of routing through paint($col).
 def paint($col):
   if   $col == "PR" then green
   elif $col == "STATUS" then paintDecision
   elif $col == "CI" then paintCi
-  elif $col == "URL" or $col == "JIRA" or $col == "UPDATED" or $col == "AGE" then dim
+  elif $col == "URL" or $col == "JIRA" or $col == "AGE" then dim
   elif $col == "MERGE" then paintMerge
   else . end;
 
 def cols:
-  if $long then ["PR", "TITLE", "STATUS", "UNRESOLVED", "APPROVALS", "CI", "URL", "JIRA", "UPDATED", "AGE", "SIZE", "MERGE"]
-  else ["PR", "TITLE", "STATUS", "UNRESOLVED", "APPROVALS", "CI", "URL", "JIRA"]
+  if $long then ["PR", "TITLE", "STATUS", "UNRESOLVED", "WAITING", "APPROVALS", "CI", "URL", "JIRA", "AGE", "SIZE", "MERGE"]
+  else ["PR", "TITLE", "STATUS", "UNRESOLVED", "WAITING", "APPROVALS", "CI", "URL", "JIRA"]
   end;
 
 # Main
@@ -95,6 +99,8 @@ def cols:
           ($pr | sizePaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "UNRESOLVED" then
           ($pr | unresolvedPaint($unresolved)) + (" " * ($w[$i] - ($c[$i] | length)))
+        elif $cols[$i] == "WAITING" then
+          ($pr | waitingPaint) + (" " * ($w[$i] - ($c[$i] | length)))
         else
           ($c[$i] | paint($cols[$i])) + (" " * ($w[$i] - ($c[$i] | length)))
         end
