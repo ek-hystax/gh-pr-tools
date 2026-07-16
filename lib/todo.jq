@@ -106,8 +106,7 @@ def paint($col):
   elif $col == "UPDATED" or $col == "AGE" or $col == "URL" or $col == "JIRA" then dim
   else . end;
 
-# Columns shown by default vs --long. UNRESOLVED sits right after MINE in
-# both, rather than at the end.
+# UNRESOLVED sits right after MINE in both column sets, rather than at the end.
 def cols:
   if $long then ["PR", "TITLE", "AUTHOR", "DECISION", "MINE", "UNRESOLVED", "UPDATED", "AGE", "RE_REVIEW", "SIZE", "CI", "MERGE", "URL", "JIRA"]
   else ["PR", "TITLE", "AUTHOR", "MINE", "UNRESOLVED", "URL"]
@@ -116,7 +115,7 @@ def cols:
 # Main
 [inputs]
 | cols as $cols
-| (.[0] | map(select(stillNeedsMe)) | sort_by(.updatedAt)) as $rows
+| (.[0] | map(select(stillNeedsMe)) | sort_by(.createdAt)) as $rows
 | ([$rows[] | cells as $all | [$cols[] | $all[.]]]) as $plain
 | ( [[$cols[] | headers[.]]] + $plain | transpose | map(map(length) | max) ) as $w
 | def pad($i): . + (" " * ($w[$i] - length));

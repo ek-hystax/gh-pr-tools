@@ -17,13 +17,14 @@ done
 me="${GH_USERNAME:-$(gh api user --jq .login)}"
 ticket_pattern="${JIRA_PREFIX:-[A-Za-z]+}-[0-9]+"
 
-# Fields beyond the default columns (decision, size, CI, merge status, age,
+# Fields beyond the default columns (decision, size, CI, merge status,
 # Jira) cost real time: each one gh pr list --json doesn't get from the search
 # response directly requires an extra per-PR lookup under the hood. Only ask
-# for them under --long, where they're actually shown.
-fields="number,title,author,reviews,reviewRequests,url,updatedAt"
+# for them under --long, where they're actually shown. createdAt is always
+# fetched (cheap, part of the base search response) since it drives sorting.
+fields="number,title,author,reviews,reviewRequests,url,updatedAt,createdAt"
 if [ "$long" = true ]; then
-  fields="$fields,reviewDecision,headRefName,changedFiles,additions,deletions,createdAt,mergeable,mergeStateStatus,statusCheckRollup"
+  fields="$fields,reviewDecision,headRefName,changedFiles,additions,deletions,mergeable,mergeStateStatus,statusCheckRollup"
 fi
 
 # involves:@me / review-requested only match *direct* requests — a PR where
@@ -36,10 +37,14 @@ my_teams=$(gh api graphql \
   -f query='query($org:String!,$me:String!){organization(login:$org){teams(first:100,userLogins:[$me]){nodes{slug}}}}' \
   -f org="$ORG" -f me="$me" --jq '.data.organization.teams.nodes[].slug' 2>/dev/null || true)
 
-searches=("involves:@me is:open -is:draft -author:@me")
+# sort:created-asc asks gh/GitHub's search API to return oldest-first, so the
+# final display order (see todo.jq's sort_by(.createdAt)) matches what the API
+# already gave us for any single search — merging multiple team searches still
+# needs that final sort_by to stay correct across the combined set.
+searches=("involves:@me is:open -is:draft -author:@me sort:created-asc")
 while IFS= read -r team; do
   [ -n "$team" ] || continue
-  searches+=("team-review-requested:$ORG/$team is:open -is:draft -author:@me")
+  searches+=("team-review-requested:$ORG/$team is:open -is:draft -author:@me sort:created-asc")
 done <<<"$my_teams"
 
 prs='[]'

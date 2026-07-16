@@ -72,7 +72,6 @@ def paint($col):
   elif $col == "MERGE" then paintMerge
   else . end;
 
-# Columns shown by default vs --long
 def cols:
   if $long then ["PR", "TITLE", "STATUS", "UNRESOLVED", "APPROVALS", "CI", "URL", "JIRA", "UPDATED", "AGE", "SIZE", "MERGE"]
   else ["PR", "TITLE", "STATUS", "UNRESOLVED", "APPROVALS", "CI", "URL", "JIRA"]
@@ -81,7 +80,7 @@ def cols:
 # Main
 [inputs][0]
 | cols as $cols
-| (. | sort_by(.updatedAt)) as $rows
+| (. | sort_by(.createdAt)) as $rows
 | ([$rows[] | cells as $all | [$cols[] | $all[.]]]) as $plain
 | ( [[$cols[] | headers[.]]] + $plain | transpose | map(map(length) | max) ) as $w
 | def pad($i): . + (" " * ($w[$i] - length));

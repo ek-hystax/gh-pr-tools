@@ -17,16 +17,19 @@ done
 me="${GH_USERNAME:-$(gh api user --jq .login)}"
 ticket_pattern="${JIRA_PREFIX:-[A-Za-z]+}-[0-9]+"
 
-# Fields beyond the default columns (size, merge status, age) cost real time:
-# each one gh pr list --json doesn't get from the search response directly
-# requires an extra per-PR lookup under the hood. Only ask for them under
-# --long, where they're actually shown.
-fields="number,title,author,reviewDecision,reviews,headRefName,url,updatedAt,statusCheckRollup"
+# Fields beyond the default columns (size, merge status) cost real time: each
+# one gh pr list --json doesn't get from the search response directly requires
+# an extra per-PR lookup under the hood. Only ask for them under --long, where
+# they're actually shown. createdAt is always fetched (cheap, part of the base
+# search response) since it drives sorting.
+fields="number,title,author,reviewDecision,reviews,headRefName,url,updatedAt,createdAt,statusCheckRollup"
 if [ "$long" = true ]; then
-  fields="$fields,changedFiles,additions,deletions,createdAt,mergeable,mergeStateStatus"
+  fields="$fields,changedFiles,additions,deletions,mergeable,mergeStateStatus"
 fi
 
-prs=$(gh pr list --repo "$REPO" --search "author:@me is:open -is:draft" --json "$fields")
+# sort:created-asc asks gh/GitHub's search API to return oldest-first, matching
+# mine.jq's sort_by(.createdAt) so the stalest PRs surface first.
+prs=$(gh pr list --repo "$REPO" --search "author:@me is:open -is:draft sort:created-asc" --json "$fields")
 
 # Unresolved review-comment counts aren't exposed by `gh pr list`/`pr view --json`
 # (no reviewThreads field), so fetch per PR via GraphQL — see fetch_unresolved_comments
