@@ -1,6 +1,6 @@
 include "common";
 
-# Inputs supplied by todo.sh: $me, $unresolved, $jiraBase, $jiraPattern, $long
+# Inputs supplied by todo.sh: $me, $unresolved, $teamMembers, $jiraBase, $jiraPattern, $long
 
 def yn($b): if $b then "yes" else "-" end;
 
@@ -19,8 +19,12 @@ def needsRereview:
   | ($m.submittedAt // null) != null
     and ((.updatedAt | fromdateiso8601) > ($m.submittedAt | fromdateiso8601));
 
+# Matches both a direct request (.login == $me) and a team request where
+# $me is a member of the requested team (.slug, resolved via $teamMembers).
 def requestedFromMe:
-  [ .reviewRequests[]? | select(.login == $me) ] | length > 0;
+  ([ .reviewRequests[]? | select(.login == $me) ] | length > 0)
+  or ([ .reviewRequests[]? | select(.slug) | (.slug | split("/") | last) ] as $teams
+      | any($teams[]; $teamMembers[.] // [] | index($me) != null));
 
 # Only PRs where I'm an actual reviewer (currently requested, or I've left
 # a review): keep pending requests, comments, changes-requested; drop

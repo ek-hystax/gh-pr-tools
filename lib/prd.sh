@@ -10,10 +10,6 @@ load_config
 arg="${1:?usage: gh pr-tools prd <pr-number | TICKET-123 | jira-link | branch-name>}"
 ticket_pattern="${JIRA_PREFIX:-[A-Za-z]+}-[0-9]+"
 
-team_members() { # $1: team slug -> JSON array of logins
-  gh api "orgs/$ORG/teams/$1/members" --paginate --jq '[.[].login]'
-}
-
 pr=$(resolve_pr "$arg")
 
 json=$(gh pr view "$pr" --repo "$REPO" \

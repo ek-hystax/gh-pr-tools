@@ -217,6 +217,10 @@ load_config() {
   : "${ORG:?ORG missing in $path — re-run: gh pr-tools init}"
 }
 
+team_members() { # $1: team slug -> JSON array of logins
+  gh api "orgs/$ORG/teams/$1/members" --paginate --jq '[.[].login]'
+}
+
 tgmap_json() {
   if [ -f "$tgmap_file" ]; then cat "$tgmap_file"; else echo '{}'; fi
 }
