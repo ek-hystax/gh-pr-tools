@@ -14,32 +14,25 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+me="${GH_USERNAME:-$(gh api user --jq .login)}"
 ticket_pattern="${JIRA_PREFIX:-[A-Za-z]+}-[0-9]+"
 
-prs=$(gh pr list --repo "$REPO" --search "author:@me is:open -is:draft" \
-  --json number,title,author,reviewDecision,reviews,headRefName,url,changedFiles,additions,deletions,updatedAt,createdAt,mergeable,mergeStateStatus,statusCheckRollup)
+# Fields beyond the default columns (size, merge status, age) cost real time:
+# each one gh pr list --json doesn't get from the search response directly
+# requires an extra per-PR lookup under the hood. Only ask for them under
+# --long, where they're actually shown.
+fields="number,title,author,reviewDecision,reviews,headRefName,url,updatedAt,statusCheckRollup"
+if [ "$long" = true ]; then
+  fields="$fields,changedFiles,additions,deletions,createdAt,mergeable,mergeStateStatus"
+fi
+
+prs=$(gh pr list --repo "$REPO" --search "author:@me is:open -is:draft" --json "$fields")
 
 # Unresolved review-comment counts aren't exposed by `gh pr list`/`pr view --json`
-# (no reviewThreads field), so fetch per PR via GraphQL. Built as a
-# {"<number>": count} map passed into jq via --argjson.
-owner="${REPO%%/*}"
-repo_name="${REPO##*/}"
-unresolved='{}'
-for number in $(jq -r '.[].number' <<<"$prs"); do
-  # A failed/rate-limited lookup for one PR must not abort the whole command —
-  # fall back to 0 (rendered as "-") and keep going.
-  count=$(gh api graphql -f query='
-    query($owner:String!,$repo:String!,$number:Int!){
-      repository(owner:$owner,name:$repo){
-        pullRequest(number:$number){
-          reviewThreads(first:100){ nodes { isResolved } }
-        }
-      }
-    }' -f owner="$owner" -f repo="$repo_name" -F number="$number" \
-    --jq '[.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved | not)] | length' 2>/dev/null) || count=0
-  [[ "$count" =~ ^[0-9]+$ ]] || count=0
-  unresolved=$(jq --arg n "$number" --argjson c "$count" '. + {($n): $c}' <<<"$unresolved")
-done
+# (no reviewThreads field), so fetch per PR via GraphQL — see fetch_unresolved_comments
+# in common.sh. A bit slower than todo/prd if you have a lot of open PRs, but
+# negligible for a normal workload.
+unresolved=$(fetch_unresolved_comments "$prs" "$me")
 
 jq -rn -L "$dir" \
   --argjson unresolved "$unresolved" \

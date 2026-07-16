@@ -220,3 +220,47 @@ load_config() {
 tgmap_json() {
   if [ -f "$tgmap_file" ]; then cat "$tgmap_file"; else echo '{}'; fi
 }
+
+# Unresolved review-thread counts aren't exposed by `gh pr list`/`pr view --json`
+# (no reviewThreads field), so fetch via GraphQL. Threads are attributed to
+# whoever left the opening comment (a static fact about the thread, not an
+# activity trace of every reply): $2 ("mine") vs anyone else ("theirs").
+#
+# All PRs are fetched in a single GraphQL call (one aliased pullRequest field
+# per PR) rather than one round trip per PR — with a dozen+ open PRs, N
+# sequential round trips is the dominant cost of the whole command.
+#
+# Args: $1 = JSON array of PRs (needs .number), $2 = login to attribute as "mine".
+# Prints a JSON map: {"<number>": {"mine": N, "theirs": M}}.
+fetch_unresolved_comments() {
+  local prs="$1" me="$2" owner repo_name numbers number query result
+  owner="${REPO%%/*}"
+  repo_name="${REPO##*/}"
+  numbers=$(jq -r '.[].number' <<<"$prs")
+  [ -n "$numbers" ] || { echo '{}'; return; }
+
+  query="query(\$owner:String!,\$repo:String!){repository(owner:\$owner,name:\$repo){"
+  while IFS= read -r number; do
+    query+="pr${number}:pullRequest(number:${number}){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}}}}}} "
+  done <<<"$numbers"
+  query+="}}"
+
+  # A failed/rate-limited lookup must not abort the whole command — fall back
+  # to an empty map (every PR renders "-") and keep going.
+  result=$(gh api graphql -f query="$query" -f owner="$owner" -f repo="$repo_name" 2>/dev/null \
+    | jq --arg me "$me" '
+        .data.repository
+        | to_entries
+        | map(select(.value != null) | {
+            key: (.key | ltrimstr("pr")),
+            value: (
+              [.value.reviewThreads.nodes[]? | select(.isResolved | not)] as $threads
+              | { mine: ([$threads[] | select(.comments.nodes[0].author.login == $me)] | length),
+                  theirs: ([$threads[] | select(.comments.nodes[0].author.login != $me)] | length) }
+            )
+          })
+        | from_entries
+      ') || result='{}'
+  echo "$result" | jq -e . >/dev/null 2>&1 || result='{}'
+  echo "$result"
+}

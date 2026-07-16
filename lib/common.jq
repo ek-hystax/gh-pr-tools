@@ -81,3 +81,21 @@ def latestReviews($author):
 
 def approvalsCount($author):
   [ latestReviews($author)[] | select(.state == "APPROVED") ] | length;
+
+# Unresolved review-thread counts, keyed by PR number, as {"mine": N, "theirs": M}
+# (see fetch_unresolved_comments in common.sh for how $map is built).
+def unresolvedMine($map): ($map[.number | tostring].mine // 0);
+def unresolvedTheirs($map): ($map[.number | tostring].theirs // 0);
+
+def unresolvedCell($map):
+  unresolvedMine($map) as $m | unresolvedTheirs($map) as $t
+  | if ($m + $t) == 0 then "-"
+    else "\($m) mine / \($t) theirs" end;
+
+def unresolvedPaint($map):
+  unresolvedMine($map) as $m | unresolvedTheirs($map) as $t
+  | if ($m + $t) == 0 then ("-" | dim)
+    else
+      ("\($m) mine" | if $m > 0 then cyan else dim end) + (" / " | dim)
+      + ("\($t) theirs" | if $t > 0 then yellow else dim end)
+    end;

@@ -16,17 +16,33 @@ done
 
 me="${GH_USERNAME:-$(gh api user --jq .login)}"
 ticket_pattern="${JIRA_PREFIX:-[A-Za-z]+}-[0-9]+"
-fields="number,title,author,reviewDecision,reviews,reviewRequests,headRefName,url,changedFiles,additions,deletions,updatedAt,createdAt,mergeable,mergeStateStatus,statusCheckRollup"
+
+# Fields beyond the default columns (decision, size, CI, merge status, age,
+# Jira) cost real time: each one gh pr list --json doesn't get from the search
+# response directly requires an extra per-PR lookup under the hood. Only ask
+# for them under --long, where they're actually shown.
+fields="number,title,author,reviews,reviewRequests,url,updatedAt"
+if [ "$long" = true ]; then
+  fields="$fields,reviewDecision,headRefName,changedFiles,additions,deletions,createdAt,mergeable,mergeStateStatus,statusCheckRollup"
+fi
 
 # involves:@me covers author/assignee/mentions/commenter/review-requested in
 # one search — broader than plain "review-requested" (which drops you as
 # soon as you submit any review, even a comment-only one). todo.jq's
 # stillNeedsMe filters back down to PRs where you're an actual reviewer.
-gh pr list --repo "$REPO" --search "involves:@me is:open -is:draft -author:@me" \
-  --json "$fields" \
-  | jq -rn -L "$dir" \
-      --arg me "$me" \
-      --arg jiraBase "${JIRA_BASE_URL:-}" \
-      --arg jiraPattern "$ticket_pattern" \
-      --argjson long "$long" \
-      -f "$dir/todo.jq"
+prs=$(gh pr list --repo "$REPO" --search "involves:@me is:open -is:draft -author:@me" \
+  --json "$fields")
+
+# Unresolved review-comment counts aren't exposed by `gh pr list`/`pr view --json`
+# (no reviewThreads field), so fetch per PR via GraphQL — see fetch_unresolved_comments
+# in common.sh. A bit slower than prd if you have a lot of PRs to triage, but
+# negligible for a normal workload.
+unresolved=$(fetch_unresolved_comments "$prs" "$me")
+
+jq -rn -L "$dir" \
+  --arg me "$me" \
+  --argjson unresolved "$unresolved" \
+  --arg jiraBase "${JIRA_BASE_URL:-}" \
+  --arg jiraPattern "$ticket_pattern" \
+  --argjson long "$long" \
+  -f "$dir/todo.jq" <<<"$prs"

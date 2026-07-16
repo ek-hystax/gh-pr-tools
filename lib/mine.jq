@@ -13,12 +13,6 @@ def paintDecision:
   elif . == "Changes requested" then red
   else yellow end;
 
-def unresolvedCount:
-  ($unresolved[.number | tostring] // 0);
-
-def unresolvedCell:
-  unresolvedCount as $n | if $n == 0 then "-" else ($n | tostring) end;
-
 def approvals:
   approvalsCount(.author.login);
 
@@ -44,39 +38,44 @@ def paintMerge:
   elif . == "clean" then green
   else dim end;
 
-# Plain cells (also used for column widths)
+# Columns are named object keys, not positional array indices — see
+# todo.jq for why (cols/paint reference these names directly, so adding or
+# reordering a column never requires renumbering anything else here).
 def cells:
-  [
-    "#\(.number)",
-    .title[0:80],
-    decision,
-    unresolvedCell,
-    (approvals | tostring),
-    ci,
-    .url,
-    jira,
-    isoRel(.updatedAt),
-    isoRel(.createdAt),
-    size,
-    merge
-  ];
+  {
+    PR:         "#\(.number)",
+    TITLE:      .title[0:80],
+    STATUS:     decision,
+    UNRESOLVED: unresolvedCell($unresolved),
+    APPROVALS:  (approvals | tostring),
+    CI:         ci,
+    URL:        .url,
+    JIRA:       jira,
+    UPDATED:    isoRel(.updatedAt),
+    AGE:        isoRel(.createdAt),
+    SIZE:       size,
+    MERGE:      merge
+  };
 
 def headers:
-  ["PR", "TITLE", "STATUS", "UNRESOLVED", "APPROVALS", "CI", "URL", "JIRA", "UPDATED", "AGE", "SIZE", "MERGE"];
+  {
+    PR: "PR", TITLE: "TITLE", STATUS: "STATUS", UNRESOLVED: "UNRESOLVED",
+    APPROVALS: "APPROVALS", CI: "CI", URL: "URL", JIRA: "JIRA",
+    UPDATED: "UPDATED", AGE: "AGE", SIZE: "SIZE", MERGE: "MERGE"
+  };
 
-def paint($i):
-  if   $i == 0 then green
-  elif $i == 2 then paintDecision
-  elif $i == 3 then (if . == "-" then dim else yellow end)
-  elif $i == 5 then paintCi
-  elif $i == 6 or $i == 7 or $i == 8 or $i == 9 then dim
-  elif $i == 11 then paintMerge
+def paint($col):
+  if   $col == "PR" then green
+  elif $col == "STATUS" then paintDecision
+  elif $col == "CI" then paintCi
+  elif $col == "URL" or $col == "JIRA" or $col == "UPDATED" or $col == "AGE" then dim
+  elif $col == "MERGE" then paintMerge
   else . end;
 
-# Columns shown by default vs --long (indexes into cells/headers)
+# Columns shown by default vs --long
 def cols:
-  if $long then [range(0; headers | length)]
-  else [0, 1, 2, 3, 4, 5, 6, 7]
+  if $long then ["PR", "TITLE", "STATUS", "UNRESOLVED", "APPROVALS", "CI", "URL", "JIRA", "UPDATED", "AGE", "SIZE", "MERGE"]
+  else ["PR", "TITLE", "STATUS", "UNRESOLVED", "APPROVALS", "CI", "URL", "JIRA"]
   end;
 
 # Main
@@ -93,8 +92,10 @@ def cols:
   | $rows[$r] as $pr
   | $plain[$r] as $c
   | [ range(0; $c | length) as $i
-      | if $cols[$i] == 10 then
+      | if $cols[$i] == "SIZE" then
           ($pr | sizePaint) + (" " * ($w[$i] - ($c[$i] | length)))
+        elif $cols[$i] == "UNRESOLVED" then
+          ($pr | unresolvedPaint($unresolved)) + (" " * ($w[$i] - ($c[$i] | length)))
         else
           ($c[$i] | paint($cols[$i])) + (" " * ($w[$i] - ($c[$i] | length)))
         end

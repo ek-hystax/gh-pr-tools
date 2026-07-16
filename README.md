@@ -3,8 +3,8 @@
 A [gh](https://cli.github.com/) extension for PR review triage.
 
 - `prd` — who has approved a PR, and who still needs to
-- `todo` — open PRs waiting on your review
-- `mine` — your own open PRs: review status, approvals, unresolved comments, CI
+- `todo` — open PRs waiting on your review, including unresolved comments (yours vs others')
+- `mine` — your own open PRs: review status, approvals, unresolved comments (yours vs others'), CI
 - `notify` — poll CI until it finishes (macOS desktop notification when done)
 
 Optional Telegram links next to reviewer names, and Jira ticket links from titles/branches. Multi-repo via named profiles. Bash + jq only — no other runtime.
@@ -179,7 +179,9 @@ gh pr-tools -p work prd 886
 gh pr-tools todo [--long]
 ```
 
-Lists open PRs where you're a pending reviewer. By default shows a compact table (PR, title, author, your review state, URL); pass `--long` for all columns, adding decision, updated/age, re-review, size, CI, merge status, and Jira link.
+Lists open PRs where you're a pending reviewer. By default shows a compact table (PR, title, author, your review state, unresolved comments, URL); pass `--long` for all columns, adding decision, updated/age, re-review, size, CI, merge status, and Jira link.
+
+The unresolved-comments column shows a `<mine> mine / <theirs> theirs` breakdown — review threads you opened that are still unresolved, versus ones the author or another reviewer opened. A thread is attributed to whoever left its opening comment, not every participant. Shows `-` when there's nothing unresolved.
 
 ### `mine` — your own open PRs
 
@@ -187,7 +189,9 @@ Lists open PRs where you're a pending reviewer. By default shows a compact table
 gh pr-tools mine [--long]
 ```
 
-Lists your own open, non-draft PRs with the columns you need to triage them: review status (Approved / Changes requested / Pending review), unresolved review-comment count, number of approvals, CI status, PR URL, and Jira link (same branch-name convention as `todo`). Pass `--long` to add updated/age, size, and merge status.
+Lists your own open, non-draft PRs with the columns you need to triage them: review status (Approved / Changes requested / Pending review), unresolved review comments, number of approvals, CI status, PR URL, and Jira link (same branch-name convention as `todo`). Pass `--long` to add updated/age, size, and merge status.
+
+The unresolved-comments column shows a `<mine> mine / <theirs> theirs` breakdown — threads you opened yourself that are still unresolved, versus ones a reviewer opened. A thread is attributed to whoever left its opening comment, not every participant. Shows `-` when there's nothing unresolved.
 
 ```bash
 gh pr-tools mine
@@ -195,7 +199,9 @@ gh pr-tools mine --long
 gh pr-tools -p work mine
 ```
 
-Unresolved review-comment counts aren't exposed by GitHub's `--json` convenience fields, so `mine` makes one extra GraphQL call per open, non-draft PR to fetch it — a bit slower than `todo`/`prd` if you have a lot of PRs open at once, but negligible for a normal workload.
+Unresolved review-comment counts aren't exposed by GitHub's `--json` convenience fields, so both `mine` and `todo` make one extra GraphQL call to fetch them — a single batched request covering every listed PR at once, not one call per PR, so it stays fast regardless of how many PRs you have open.
+
+Both commands also only request the PR fields their current column set needs — decision, size, CI, merge status, age, and Jira link all cost an extra per-PR lookup under the hood, so `--long` fetches noticeably more data than the default view.
 
 ### `notify` — watch CI
 

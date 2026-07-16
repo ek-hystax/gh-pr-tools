@@ -1,6 +1,6 @@
 include "common";
 
-# Inputs supplied by todo.sh: $me, $jiraBase, $jiraPattern, $long
+# Inputs supplied by todo.sh: $me, $unresolved, $jiraBase, $jiraPattern, $long
 
 def yn($b): if $b then "yes" else "-" end;
 
@@ -45,27 +45,6 @@ def merge:
 
 def decision: .reviewDecision // "PENDING";
 
-# Plain cells (also used for column widths)
-def cells:
-  [
-    "#\(.number)",
-    .title[0:80],
-    .author.login,
-    decision,
-    mineState,
-    isoRel(.updatedAt),
-    isoRel(.createdAt),
-    yn(needsRereview),
-    size,
-    ciState,
-    merge,
-    .url,
-    jiraFromBranch($jiraBase; $jiraPattern)
-  ];
-
-def headers:
-  ["PR", "TITLE", "AUTHOR", "DECISION", "MINE", "UPDATED", "AGE", "RE-REVIEW", "SIZE", "CI", "MERGE", "URL", "JIRA"];
-
 def paintDecision:
   if startswith("APPROVED") then green
   elif startswith("CHANGES") then red
@@ -84,21 +63,50 @@ def paintMerge:
   elif . == "clean" then green
   else dim end;
 
-def paint($i):
-  if   $i == 0 then green
-  elif $i == 2 then cyan
-  elif $i == 3 then paintDecision
-  elif $i == 4 then paintMine
-  elif $i == 7 then (if . == "yes" then yellow else dim end)
-  elif $i == 9 then paintCi
-  elif $i == 10 then paintMerge
-  elif $i == 5 or $i == 6 or $i == 11 or $i == 12 then dim
+# Columns are named object keys, not positional array indices — cols/paint
+# reference these names directly, so adding/reordering a column never
+# requires renumbering anything else in this file.
+def cells:
+  {
+    PR:         "#\(.number)",
+    TITLE:      .title[0:80],
+    AUTHOR:     .author.login,
+    DECISION:   decision,
+    MINE:       mineState,
+    UNRESOLVED: unresolvedCell($unresolved),
+    UPDATED:    isoRel(.updatedAt),
+    AGE:        isoRel(.createdAt),
+    RE_REVIEW:  yn(needsRereview),
+    SIZE:       size,
+    CI:         ciState,
+    MERGE:      merge,
+    URL:        .url,
+    JIRA:       jiraFromBranch($jiraBase; $jiraPattern)
+  };
+
+def headers:
+  {
+    PR: "PR", TITLE: "TITLE", AUTHOR: "AUTHOR", DECISION: "DECISION", MINE: "MINE",
+    UNRESOLVED: "UNRESOLVED", UPDATED: "UPDATED", AGE: "AGE", RE_REVIEW: "RE-REVIEW",
+    SIZE: "SIZE", CI: "CI", MERGE: "MERGE", URL: "URL", JIRA: "JIRA"
+  };
+
+def paint($col):
+  if   $col == "PR" then green
+  elif $col == "AUTHOR" then cyan
+  elif $col == "DECISION" then paintDecision
+  elif $col == "MINE" then paintMine
+  elif $col == "RE_REVIEW" then (if . == "yes" then yellow else dim end)
+  elif $col == "CI" then paintCi
+  elif $col == "MERGE" then paintMerge
+  elif $col == "UPDATED" or $col == "AGE" or $col == "URL" or $col == "JIRA" then dim
   else . end;
 
-# Columns shown by default vs --long (indexes into cells/headers)
+# Columns shown by default vs --long. UNRESOLVED sits right after MINE in
+# both, rather than at the end.
 def cols:
-  if $long then [range(0; headers | length)]
-  else [0, 1, 2, 4, 11]  # PR, TITLE, AUTHOR, MINE, URL
+  if $long then ["PR", "TITLE", "AUTHOR", "DECISION", "MINE", "UNRESOLVED", "UPDATED", "AGE", "RE_REVIEW", "SIZE", "CI", "MERGE", "URL", "JIRA"]
+  else ["PR", "TITLE", "AUTHOR", "MINE", "UNRESOLVED", "URL"]
   end;
 
 # Main
@@ -115,8 +123,10 @@ def cols:
   | $rows[$r] as $pr
   | $plain[$r] as $c
   | [ range(0; $c | length) as $i
-      | if $cols[$i] == 8 then
+      | if $cols[$i] == "SIZE" then
           ($pr | sizePaint) + (" " * ($w[$i] - ($c[$i] | length)))
+        elif $cols[$i] == "UNRESOLVED" then
+          ($pr | unresolvedPaint($unresolved)) + (" " * ($w[$i] - ($c[$i] | length)))
         else
           ($c[$i] | paint($cols[$i])) + (" " * ($w[$i] - ($c[$i] | length)))
         end
