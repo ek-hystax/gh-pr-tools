@@ -98,20 +98,18 @@ def latestReviews($author):
 def approvalsCount($author):
   [ latestReviews($author)[] | select(.state == "APPROVED") ] | length;
 
-# Unresolved review-thread counts, keyed by PR number, as {"mine": N, "theirs": M}
-# (see fetch_unresolved_comments in common.sh for how $map is built).
-def unresolvedMine($map): ($map[.number | tostring].mine // 0);
-def unresolvedTheirs($map): ($map[.number | tostring].theirs // 0);
+# Open review-thread stats, keyed by PR number, as
+# {"mine": {"total": N, "answered": X}, "theirs": {"total": M, "answered": Y}}
+# (see fetch_review_threads in common.sh for how $map is built and what
+# "answered" means).
+def threadsMineTotal($map): ($map[.number | tostring].mine.total // 0);
+def threadsMineAnswered($map): ($map[.number | tostring].mine.answered // 0);
+def threadsTheirsTotal($map): ($map[.number | tostring].theirs.total // 0);
+def threadsTheirsAnswered($map): ($map[.number | tostring].theirs.answered // 0);
 
-def unresolvedCell($map):
-  unresolvedMine($map) as $m | unresolvedTheirs($map) as $t
-  | if ($m + $t) == 0 then "-"
-    else "\($m) mine / \($t) theirs" end;
-
-def unresolvedPaint($map):
-  unresolvedMine($map) as $m | unresolvedTheirs($map) as $t
-  | if ($m + $t) == 0 then ("-" | dim)
-    else
-      ("\($m) mine" | if $m > 0 then cyan else dim end) + (" / " | dim)
-      + ("\($t) theirs" | if $t > 0 then yellow else dim end)
-    end;
+# Plain-text formatter shared by todo.jq/mine.jq — each picks its own bucket
+# (mine vs theirs) and paint emphasis, since which count matters most differs
+# by perspective.
+def threadsCell($total; $answered):
+  if $total == 0 then "-"
+  else "\($total) (\($answered) answered)" end;

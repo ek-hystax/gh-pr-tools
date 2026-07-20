@@ -31,14 +31,14 @@ fi
 # mine.jq's sort_by(.createdAt) so the stalest PRs surface first.
 prs=$(gh pr list --repo "$REPO" --search "author:@me is:open -is:draft sort:created-asc" --json "$fields")
 
-# Unresolved review-comment counts aren't exposed by `gh pr list`/`pr view --json`
-# (no reviewThreads field), so fetch per PR via GraphQL — see fetch_unresolved_comments
+# Open review-thread stats aren't exposed by `gh pr list`/`pr view --json`
+# (no reviewThreads field), so fetch per PR via GraphQL — see fetch_review_threads
 # in common.sh. A bit slower than todo/prd if you have a lot of open PRs, but
 # negligible for a normal workload.
-unresolved=$(fetch_unresolved_comments "$prs" "$me")
+threads=$(fetch_review_threads "$prs" "$me")
 
 jq -rn -L "$dir" \
-  --argjson unresolved "$unresolved" \
+  --argjson threads "$threads" \
   --arg jiraBase "${JIRA_BASE_URL:-}" \
   --arg jiraPattern "$ticket_pattern" \
   --argjson long "$long" \

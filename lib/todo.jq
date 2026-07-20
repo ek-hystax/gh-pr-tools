@@ -1,6 +1,6 @@
 include "common";
 
-# Inputs supplied by todo.sh: $me, $unresolved, $teamMembers, $jiraBase, $jiraPattern, $long
+# Inputs supplied by todo.sh: $me, $threads, $teamMembers, $jiraBase, $jiraPattern, $long
 
 def yn($b): if $b then "yes" else "-" end;
 
@@ -54,6 +54,19 @@ def sizePaint:
   + " +\(.additions // 0 | tostring | green)"
   + "/\("-" + (.deletions // 0 | tostring) | red)";
 
+# Only threads I opened (mine bucket) — the ones I'm waiting on the owner
+# for. "Answered" (owner replied) is what needs my attention next, since the
+# thread is still open despite the reply, so it's the count worth
+# highlighting.
+def threadsPaint:
+  threadsMineTotal($threads) as $t | threadsMineAnswered($threads) as $a
+  | if $t == 0 then ("-" | dim)
+    else
+      ("\($t)" | cyan) + (" (" | dim)
+      + ("\($a) answered" | if $a > 0 then yellow else dim end)
+      + (")" | dim)
+    end;
+
 def merge:
   if .mergeable == "CONFLICTING" then "conflict"
   else (.mergeStateStatus // "-" | ascii_downcase)
@@ -89,7 +102,7 @@ def cells:
     AUTHOR:     .author.login,
     DECISION:   decision,
     MINE:       mineState,
-    UNRESOLVED: unresolvedCell($unresolved),
+    THREADS:    threadsCell(threadsMineTotal($threads); threadsMineAnswered($threads)),
     WAITING:    isoRel(waitingSince),
     UPDATED:    isoRel(.updatedAt),
     AGE:        isoRel(.createdAt),
@@ -104,11 +117,11 @@ def cells:
 def headers:
   {
     PR: "PR", TITLE: "TITLE", AUTHOR: "AUTHOR", DECISION: "DECISION", MINE: "MINE",
-    UNRESOLVED: "UNRESOLVED", WAITING: "WAITING", UPDATED: "UPDATED", AGE: "AGE", RE_REVIEW: "RE-REVIEW",
+    THREADS: "THREADS", WAITING: "WAITING", UPDATED: "UPDATED", AGE: "AGE", RE_REVIEW: "RE-REVIEW",
     SIZE: "SIZE", CI: "CI", MERGE: "MERGE", URL: "URL", JIRA: "JIRA"
   };
 
-# SIZE, UNRESOLVED, WAITING need the raw PR object, not cell text, so the
+# SIZE, THREADS, WAITING need the raw PR object, not cell text, so the
 # render loop special-cases them instead of routing through paint($col).
 def paint($col):
   if   $col == "PR" then green
@@ -121,10 +134,10 @@ def paint($col):
   elif $col == "UPDATED" or $col == "AGE" or $col == "URL" or $col == "JIRA" then dim
   else . end;
 
-# UNRESOLVED sits right after MINE in both column sets, rather than at the end.
+# THREADS sits right after MINE in both column sets, rather than at the end.
 def cols:
-  if $long then ["PR", "TITLE", "AUTHOR", "DECISION", "MINE", "UNRESOLVED", "RE_REVIEW", "WAITING", "UPDATED", "AGE", "SIZE", "CI", "MERGE", "URL", "JIRA"]
-  else ["PR", "TITLE", "AUTHOR", "MINE", "UNRESOLVED", "RE_REVIEW", "WAITING", "URL"]
+  if $long then ["PR", "TITLE", "AUTHOR", "DECISION", "MINE", "THREADS", "RE_REVIEW", "WAITING", "UPDATED", "AGE", "SIZE", "CI", "MERGE", "URL", "JIRA"]
+  else ["PR", "TITLE", "AUTHOR", "MINE", "THREADS", "RE_REVIEW", "WAITING", "URL"]
   end;
 
 # Main
@@ -143,8 +156,8 @@ def cols:
   | [ range(0; $c | length) as $i
       | if $cols[$i] == "SIZE" then
           ($pr | sizePaint) + (" " * ($w[$i] - ($c[$i] | length)))
-        elif $cols[$i] == "UNRESOLVED" then
-          ($pr | unresolvedPaint($unresolved)) + (" " * ($w[$i] - ($c[$i] | length)))
+        elif $cols[$i] == "THREADS" then
+          ($pr | threadsPaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "WAITING" then
           ($pr | waitingPaint) + (" " * ($w[$i] - ($c[$i] | length)))
         else

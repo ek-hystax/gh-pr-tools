@@ -3,8 +3,8 @@
 A [gh](https://cli.github.com/) extension for PR review triage.
 
 - `prd` — who has approved a PR, and who still needs to
-- `todo` — open PRs waiting on your review, including unresolved comments (yours vs others')
-- `mine` — your own open PRs: review status, approvals, unresolved comments (yours vs others'), CI
+- `todo` — open PRs waiting on your review, including open threads you started and whether the author's answered
+- `mine` — your own open PRs: review status, approvals, open threads reviewers started and whether you've answered, CI
 - `notify` — poll CI until it finishes (macOS desktop notification when done)
 
 Optional Telegram links next to reviewer names, and Jira ticket links from titles/branches. Multi-repo via named profiles. Bash + jq only — no other runtime.
@@ -79,7 +79,7 @@ Open PRs waiting on your review:
 gh pr-tools todo
 ```
 
-Your own open PRs — review status, approvals, unresolved comments, CI:
+Your own open PRs — review status, approvals, open threads, CI:
 
 ```bash
 gh pr-tools mine
@@ -179,9 +179,9 @@ gh pr-tools -p work prd 886
 gh pr-tools todo [--long]
 ```
 
-Lists open PRs where you're a pending reviewer. By default shows a compact table (PR, title, author, your review state, unresolved comments, how long it's been waiting on you, URL); pass `--long` for all columns, adding decision, last-updated, age, re-review, size, CI, merge status, and Jira link.
+Lists open PRs where you're a pending reviewer. By default shows a compact table (PR, title, author, your review state, open threads, how long it's been waiting on you, URL); pass `--long` for all columns, adding decision, last-updated, age, re-review, size, CI, merge status, and Jira link.
 
-The unresolved-comments column shows a `<mine> mine / <theirs> theirs` breakdown — review threads you opened that are still unresolved, versus ones the author or another reviewer opened. A thread is attributed to whoever left its opening comment, not every participant. Shows `-` when there's nothing unresolved.
+The `THREADS` column only counts review threads *you* opened that are still open (unresolved) — a thread is attributed to whoever left its opening comment, not every participant. It shows `N (A answered)`: `N` is how many of your threads are still open, `A` is how many the PR author has since replied to (e.g. "Fixed") even though the thread is still open — those are the ones worth going back to re-check, so the answered count is highlighted when non-zero. Shows `-` when you have nothing open.
 
 The `WAITING` column is color-graded by how long a review has been outstanding on you — dim under a day, plain 1–3 days, yellow 3–7 days, bold red past a week — so the oldest unaddressed reviews stand out by default. `--long`'s `UPDATED` column is different: the PR's raw last-activity time, not specific to your own review.
 
@@ -191,9 +191,9 @@ The `WAITING` column is color-graded by how long a review has been outstanding o
 gh pr-tools mine [--long]
 ```
 
-Lists your own open, non-draft PRs with the columns you need to triage them: review status (Approved / Changes requested / Pending review), unresolved review comments, how long it's been waiting (`WAITING`, same color grading as `todo`), number of approvals, CI status, PR URL, and Jira link (same branch-name convention as `todo`). Pass `--long` to add age, size, and merge status.
+Lists your own open, non-draft PRs with the columns you need to triage them: review status (Approved / Changes requested / Pending review), open review threads, how long it's been waiting (`WAITING`, same color grading as `todo`), number of approvals, CI status, PR URL, and Jira link (same branch-name convention as `todo`). Pass `--long` to add age, size, and merge status.
 
-The unresolved-comments column shows a `<mine> mine / <theirs> theirs` breakdown — threads you opened yourself that are still unresolved, versus ones a reviewer opened. A thread is attributed to whoever left its opening comment, not every participant. Shows `-` when there's nothing unresolved.
+The `THREADS` column only counts review threads *reviewers* opened that are still open (unresolved) — a thread is attributed to whoever left its opening comment, not every participant. It shows `N (A answered)`: `N` is how many are still open, `A` is how many you've already replied to (those are now waiting on the reviewer next). The unanswered remainder — the ones you haven't replied to yet — is what's highlighted, since that's what still needs you. Shows `-` when there's nothing open.
 
 ```bash
 gh pr-tools mine
@@ -201,7 +201,7 @@ gh pr-tools mine --long
 gh pr-tools -p work mine
 ```
 
-Unresolved review-comment counts aren't exposed by GitHub's `--json` convenience fields, so both `mine` and `todo` make one extra GraphQL call to fetch them — a single batched request covering every listed PR at once, not one call per PR, so it stays fast regardless of how many PRs you have open.
+Open review-thread stats aren't exposed by GitHub's `--json` convenience fields, so both `mine` and `todo` make one extra GraphQL call to fetch them — a single batched request covering every listed PR at once, not one call per PR, so it stays fast regardless of how many PRs you have open.
 
 Both commands also only request the PR fields their current column set needs — decision, size, CI, merge status, age, and Jira link all cost an extra per-PR lookup under the hood, so `--long` fetches noticeably more data than the default view.
 

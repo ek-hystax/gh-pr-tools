@@ -53,11 +53,11 @@ for search in "${searches[@]}"; do
   prs=$(printf '%s\n%s' "$prs" "$batch" | jq -s 'add | unique_by(.number)')
 done
 
-# Unresolved review-comment counts aren't exposed by `gh pr list`/`pr view --json`
-# (no reviewThreads field), so fetch per PR via GraphQL — see fetch_unresolved_comments
+# Open review-thread stats aren't exposed by `gh pr list`/`pr view --json`
+# (no reviewThreads field), so fetch per PR via GraphQL — see fetch_review_threads
 # in common.sh. A bit slower than prd if you have a lot of PRs to triage, but
 # negligible for a normal workload.
-unresolved=$(fetch_unresolved_comments "$prs" "$me")
+threads=$(fetch_review_threads "$prs" "$me")
 
 # Resolve each requested team to its member logins so todo.jq can tell whether
 # $me is covered by a team request (same map prd.jq uses). reviewRequests
@@ -70,7 +70,7 @@ done
 
 jq -rn -L "$dir" \
   --arg me "$me" \
-  --argjson unresolved "$unresolved" \
+  --argjson threads "$threads" \
   --argjson teamMembers "$members" \
   --arg jiraBase "${JIRA_BASE_URL:-}" \
   --arg jiraPattern "$ticket_pattern" \

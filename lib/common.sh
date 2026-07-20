@@ -225,18 +225,23 @@ tgmap_json() {
   if [ -f "$tgmap_file" ]; then cat "$tgmap_file"; else echo '{}'; fi
 }
 
-# Unresolved review-thread counts aren't exposed by `gh pr list`/`pr view --json`
-# (no reviewThreads field), so fetch via GraphQL. Threads are attributed to
-# whoever left the opening comment (a static fact about the thread, not an
-# activity trace of every reply): $2 ("mine") vs anyone else ("theirs").
+# Open (non-resolved) review-thread stats aren't exposed by `gh pr list`/`pr
+# view --json` (no reviewThreads field), so fetch via GraphQL. Threads are
+# split by who left the *opening* comment (a static fact about the thread,
+# not an activity trace of every reply): $2 ("mine") vs anyone else
+# ("theirs"). Each bucket also tracks how many threads are "answered" — the
+# *last* comment's author is the PR's owner, meaning the owner has since
+# replied (e.g. "Fixed") even though the thread is still open.
 #
 # All PRs are fetched in a single GraphQL call (one aliased pullRequest field
 # per PR) rather than one round trip per PR — with a dozen+ open PRs, N
 # sequential round trips is the dominant cost of the whole command.
 #
-# Args: $1 = JSON array of PRs (needs .number), $2 = login to attribute as "mine".
-# Prints a JSON map: {"<number>": {"mine": N, "theirs": M}}.
-fetch_unresolved_comments() {
+# Args: $1 = JSON array of PRs (needs .number and .author.login), $2 = login
+# to attribute as "mine".
+# Prints a JSON map: {"<number>": {"mine": {"total": N, "answered": X},
+#                                  "theirs": {"total": M, "answered": Y}}}.
+fetch_review_threads() {
   local prs="$1" me="$2" owner repo_name numbers number query result
   owner="${REPO%%/*}"
   repo_name="${REPO##*/}"
@@ -245,22 +250,28 @@ fetch_unresolved_comments() {
 
   query="query(\$owner:String!,\$repo:String!){repository(owner:\$owner,name:\$repo){"
   while IFS= read -r number; do
-    query+="pr${number}:pullRequest(number:${number}){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}}}}}} "
+    query+="pr${number}:pullRequest(number:${number}){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}}} lastComments: comments(last:1){nodes{author{login}}}}}} "
   done <<<"$numbers"
   query+="}}"
 
   # A failed/rate-limited lookup must not abort the whole command — fall back
   # to an empty map (every PR renders "-") and keep going.
   result=$(gh api graphql -f query="$query" -f owner="$owner" -f repo="$repo_name" 2>/dev/null \
-    | jq --arg me "$me" '
-        .data.repository
+    | jq --arg me "$me" --argjson prs "$prs" '
+        (reduce $prs[] as $pr ({}; .[$pr.number | tostring] = $pr.author.login)) as $owners
+        | .data.repository
         | to_entries
-        | map(select(.value != null) | {
-            key: (.key | ltrimstr("pr")),
+        | map(select(.value != null) | (.key | ltrimstr("pr")) as $num | {
+            key: $num,
             value: (
-              [.value.reviewThreads.nodes[]? | select(.isResolved | not)] as $threads
-              | { mine: ([$threads[] | select(.comments.nodes[0].author.login == $me)] | length),
-                  theirs: ([$threads[] | select(.comments.nodes[0].author.login != $me)] | length) }
+              ($owners[$num] // "") as $owner
+              | [.value.reviewThreads.nodes[]? | select(.isResolved | not)] as $threads
+              | ($threads | map(select(.comments.nodes[0].author.login == $me))) as $mine
+              | ($threads | map(select(.comments.nodes[0].author.login != $me))) as $theirs
+              | { mine:   { total: ($mine | length),
+                            answered: ([$mine[]   | select(.lastComments.nodes[0].author.login == $owner)] | length) },
+                  theirs: { total: ($theirs | length),
+                            answered: ([$theirs[] | select(.lastComments.nodes[0].author.login == $owner)] | length) } }
             )
           })
         | from_entries
