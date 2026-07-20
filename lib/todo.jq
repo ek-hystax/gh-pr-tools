@@ -123,8 +123,8 @@ def paint($col):
 
 # UNRESOLVED sits right after MINE in both column sets, rather than at the end.
 def cols:
-  if $long then ["PR", "TITLE", "AUTHOR", "DECISION", "MINE", "UNRESOLVED", "WAITING", "UPDATED", "AGE", "RE_REVIEW", "SIZE", "CI", "MERGE", "URL", "JIRA"]
-  else ["PR", "TITLE", "AUTHOR", "MINE", "UNRESOLVED", "WAITING", "URL"]
+  if $long then ["PR", "TITLE", "AUTHOR", "DECISION", "MINE", "UNRESOLVED", "RE_REVIEW", "WAITING", "UPDATED", "AGE", "SIZE", "CI", "MERGE", "URL", "JIRA"]
+  else ["PR", "TITLE", "AUTHOR", "MINE", "UNRESOLVED", "RE_REVIEW", "WAITING", "URL"]
   end;
 
 # Main
