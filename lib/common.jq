@@ -124,6 +124,16 @@ def teamApproverLogins($author; $teamLogins):
 def hasChangesRequested($author):
   [ latestReviews($author)[] | select(.state == "CHANGES_REQUESTED") ] | length > 0;
 
+# Reviewers whose latest review is APPROVED but against an older commit —
+# the complement of approverLogins() (same reviews, opposite commit-oid
+# check).
+def staleApproverLogins($author):
+  .headRefOid as $head
+  | [ latestReviews($author)[] | select(.state == "APPROVED" and .commit.oid != $head) | .author.login ];
+
+def staleTeamApproverLogins($author; $teamLogins):
+  [ staleApproverLogins($author)[] | select(. as $l | $teamLogins | index($l) != null) ];
+
 # Bundles the review-derived numbers the STATUS/APPROVALS cells need,
 # computed once per PR — approvalDecision/approvalsCell/approvalsPaint all
 # read from this instead of separately re-walking .reviews. $teamLogins is
@@ -133,41 +143,63 @@ def hasChangesRequested($author):
 def approvalStats($author; $teamLogins):
   { count: (approverLogins($author) | length),
     teamCount: (teamApproverLogins($author; $teamLogins) | length),
-    changesRequested: hasChangesRequested($author) };
+    changesRequested: hasChangesRequested($author),
+    staleCount: (staleApproverLogins($author) | length),
+    staleTeamCount: (staleTeamApproverLogins($author; $teamLogins) | length) };
 
-# "N (M)" — N distinct approvers total, M of whom are teammates.
+# "N (team M; stale K)" — N total distinct approvers (fresh + stale), team M
+# of whom are teammates (fresh + stale), with the "; stale K" segment only
+# shown when K > 0. approvalStats keeps fresh and stale counts separate;
+# this is where they're combined for display. Must render the exact same
+# visible characters as approvalsPaint below (colWidths sizes columns off
+# this plain form).
 def approvalsCell($stats):
-  "\($stats.count) (\($stats.teamCount))";
+  ($stats.count + $stats.staleCount) as $total
+  | ($stats.teamCount + $stats.staleTeamCount) as $teamTotal
+  | "\($total) (team \($teamTotal)\(if $stats.staleCount > 0 then "; stale \($stats.staleCount)" else "" end))";
 
 # The tool's own approval verdict, driven by the profile's
 # APPROVAL_THRESHOLD (how many approvals *this user* personally requires) —
-# independent of GitHub's reviewDecision/branch-protection rule.
+# independent of GitHub's reviewDecision/branch-protection rule. "Approved
+# (stale)" only fires when fresh + stale approvers together meet the
+# threshold; below threshold even counting stale approvers, it's "Pending
+# review".
 def approvalDecision($stats; $approvalThreshold):
   if $stats.changesRequested then "Changes requested"
   elif $stats.count >= $approvalThreshold then "Approved"
+  elif $stats.staleCount > 0 and ($stats.count + $stats.staleCount) >= $approvalThreshold then "Approved (stale)"
   else "Pending review"
   end;
 
 # Shared by mine.jq/todo.jq (Title Case cell text) and prd.jq (lowercased
 # prose) — compares case-insensitively so callers can colorize either casing
-# without duplicating this per file.
+# without duplicating this per file. For "Approved (stale)", the
+# "Approved"/"approved" word (always 8 chars in either casing) is colored
+# green and the trailing " (stale)" is colored yellow.
 def paintDecision:
   (. | ascii_downcase) as $l
   | if $l == "approved" then green
     elif $l == "changes requested" then red
+    elif $l == "approved (stale)" then (.[0:8] | green) + (.[8:] | yellow)
     else yellow end;
 
-# Dims the APPROVALS count whenever the overall decision would be "Changes
-# requested", so it never contradicts the STATUS column in the same row (a
-# high approver count alongside an outstanding changes-request read as
-# "approved" otherwise). Reuses approvalDecision's own branches rather than
-# re-deriving them, so the two can never drift out of sync.
+# Colors the APPROVALS cell to match the STATUS decision for the same row:
+# the "total (team teamTotal" part and the closing ")" are dim for
+# "Pending review"/"Changes requested" and green for "Approved"; the
+# "stale K" segment is always yellow. Must produce the exact same visible
+# characters as approvalsCell above — only ANSI codes differ — since
+# colWidths pads rows based on that plain-text length.
 def approvalsPaint($stats; $approvalThreshold):
   approvalDecision($stats; $approvalThreshold) as $d
-  | approvalsCell($stats) as $text
-  | if $d == "Changes requested" then ($text | dim)
-    elif $d == "Approved" then ($text | green)
-    else ($text | dim)
+  | ($stats.count + $stats.staleCount) as $total
+  | ($stats.teamCount + $stats.staleTeamCount) as $teamTotal
+  | "\($total) (team \($teamTotal)" as $prefix
+  | (if $stats.staleCount > 0 then "; " else "" end) as $sep
+  | (if $stats.staleCount > 0 then ("stale \($stats.staleCount)" | yellow) else "" end) as $staleNum
+  | ")" as $suffix
+  | if $d == "Changes requested" then ($prefix | dim) + ($sep | dim) + $staleNum + ($suffix | dim)
+    elif $d == "Approved" then ($prefix | green) + ($sep | green) + $staleNum + ($suffix | green)
+    else ($prefix | dim) + ($sep | dim) + $staleNum + ($suffix | dim)
     end;
 
 # Open review-thread stats, keyed by PR number, as

@@ -24,9 +24,11 @@ def paintReason:
 | def reviewedReason($login):
     $latest[$login].state | ascii_downcase | gsub("_"; " ");
 
-# 1. Individually requested users (GitHub itself decides when someone needs
-# re-review, e.g. via branch-protection re-request on push — trust reviewRequests
-# rather than guessing staleness from commit timestamps)
+# 1. Individually requested users. Scoped to *this* category only: GitHub
+# itself decides when someone needs re-review via branch-protection
+# re-request on push, so this trusts reviewRequests rather than deriving
+# re-review need from commit timestamps. (Category 4 below, stale
+# approvals, is a separate signal computed independently of this one.)
   ([ $pr.reviewRequests[]?
      | select(.login)
      | { login,
@@ -64,11 +66,15 @@ def paintReason:
   ) as $pending
 
 # Approved: latest review is APPROVED against the current head commit, and
-# not overridden by a (re-)request above
+# not overridden by a (re-)request above, plus stale approvers (reason ==
+# "stale approval" in $pending) tagged (stale). A reviewer can appear here
+# and under "Waiting on" at the same time when their approval is stale.
 | ([ $latest | to_entries[]
      | select(.value.state == "APPROVED" and (.value.commit.oid // null) == $pr.headRefOid)
      | select(any($pending[]; .login == .key) | not)
-     | {login: .key, submittedAt: .value.submittedAt} ]
+     | {login: .key, submittedAt: .value.submittedAt, stale: false} ]
+   + [ $pending[] | select(.reason == "stale approval")
+     | {login, submittedAt: $latest[.login].submittedAt, stale: true} ]
    | sort_by(.submittedAt)) as $approved
 
 # Output
@@ -85,7 +91,10 @@ def paintReason:
       "Approved by:",
       ( ($approved | map(.login | length) | max) as $lw
       | $approved[]
-      | "  \((.login | green) + (" " * ($lw - (.login | length))))  \(if (.login as $l | $teamLogins | index($l)) then ("(team)" | dim) else "" end)  \(tglink(.login))"
+      | (if (.login as $l | $teamLogins | index($l)) then ("(team)" | dim) else "" end) as $teamTag
+      | (if .stale then ("(stale)" | yellow) else "" end) as $staleTag
+      | ([$teamTag, $staleTag] | map(select(. != "")) | join(" ")) as $tags
+      | "  \((.login | green) + (" " * ($lw - (.login | length))))  \($tags)  \(tglink(.login))"
       ),
       ""
     end ),
