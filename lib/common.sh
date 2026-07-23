@@ -254,6 +254,74 @@ tgmap_json() {
   if [ -f "$tgmap_file" ]; then cat "$tgmap_file"; else echo '{}'; fi
 }
 
+# Closed PRs (merged or not) in $REPO, together with whether each one's head
+# branch ref still exists — in one paginated GraphQL query rather than a
+# REST list call followed by a separate existence check. `headRefName` (a
+# plain API string) survives branch deletion forever, but GraphQL's `headRef`
+# (the actual Ref object) resolves to null once the branch is gone — that's
+# the only way to detect it.
+#
+# GraphQL's `search` field has the same ~1000-result ceiling as `gh pr list
+# --search` (there's no "branch still exists" search qualifier to filter
+# narrower than that), so this still stops at $1 PRs scanned — it just gets
+# there in one query shape instead of two. Paged 100 at a time (GraphQL
+# search's own per-page max). An unscoped $2 (no author clause) searches the
+# whole repo, not just one person, so it hits that ceiling far sooner.
+#
+# A failed lookup here is NOT swallowed to an empty/default value: this
+# function's whole job is telling leftover branches apart from cleaned-up
+# ones, so silently defaulting to "gone" would under-report (every PR would
+# read as already cleaned up) rather than fail loudly — worse than erroring
+# out.
+#
+# Args: $1 = max PRs to scan, $2 = author search clause (e.g. "author:@me",
+# "author:octocat", or "" to include every author).
+# Prints a JSON object {prs: [...], truncated: bool}. `truncated` is true
+# only when the scan actually stopped short of the full result set (the last
+# page fetched still had hasNextPage:true) — the caller can't reliably infer
+# this just by comparing the returned count against $1 or GitHub's 1000-result
+# ceiling, since a true result count that happens to equal that number would
+# look identical to a real cutoff.
+fetch_closed_prs_with_branch_status() {
+  local max="$1" author_clause="${2:-}" cursor="null" has_next="true" all='[]' page_size fetched=0 response nodes got q
+
+  q="is:pr is:closed repo:${REPO} sort:updated-desc"
+  [ -n "$author_clause" ] && q="$author_clause $q"
+
+  while [ "$has_next" = "true" ] && [ "$fetched" -lt "$max" ]; do
+    page_size=$(( max - fetched < 100 ? max - fetched : 100 ))
+    response=$(gh api graphql -f query='
+      query($q: String!, $n: Int!, $cursor: String) {
+        search(query: $q, type: ISSUE, first: $n, after: $cursor) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            ... on PullRequest {
+              number title url closedAt mergedAt headRefName
+              author { login }
+              headRef { id }
+            }
+          }
+        }
+      }' -f q="$q" -F n="$page_size" -F cursor="$cursor")
+
+    # A deleted GitHub account leaves .author null on old PRs — "ghost"
+    # matches GitHub's own UI label for that case.
+    nodes=$(jq '[.data.search.nodes[]
+                 | {number, title, url, closedAt, mergedAt, headRefName,
+                    author: (.author.login // "ghost"),
+                    branchExists: (.headRef != null)}]' <<<"$response")
+    got=$(jq 'length' <<<"$nodes")
+    all=$(jq -n --argjson a "$all" --argjson b "$nodes" '$a + $b')
+    fetched=$((fetched + got))
+    [ "$got" -gt 0 ] || break
+    has_next=$(jq -r '.data.search.pageInfo.hasNextPage' <<<"$response")
+    cursor=$(jq -r '.data.search.pageInfo.endCursor // "null"' <<<"$response")
+  done
+
+  jq -n --argjson prs "$all" --argjson truncated "$([ "$has_next" = "true" ] && echo true || echo false)" \
+    '{prs: $prs, truncated: $truncated}'
+}
+
 # Open (non-resolved) review-thread stats aren't exposed by `gh pr list`/`pr
 # view --json` (no reviewThreads field), so fetch via GraphQL. Threads are
 # split by who left the *opening* comment (a static fact about the thread,

@@ -27,6 +27,20 @@ def relTime($ts):
 def isoRel($at):
   if $at == null then "-" else ($at | fromdateiso8601 | relTime(.)) end;
 
+# Column width per position: max of the header cell and every row cell at
+# that position. $headerCells and each row in $plainRows must already be
+# arrays ordered the same as the table's column list.
+def colWidths($headerCells; $plainRows):
+  ( [$headerCells] + $plainRows | transpose | map(map(length) | max) );
+
+# Padded, dimmed header row for a table, given column order, the
+# headers-by-name object, and widths from colWidths.
+def renderHeaderRow($cols; $headers; $w):
+  [ range(0; $cols | length) as $i
+    | ($headers[$cols[$i]]) as $h
+    | $h + (" " * ($w[$i] - ($h | length)))
+  ] | join("  ") | dim;
+
 # Escalating color by elapsed seconds: <1d/1-3d/3-7d/7d+. 1d/7d boundaries
 # match relTime's own bucket edges.
 def waitPaint($seconds):

@@ -139,11 +139,10 @@ def cols:
 [inputs]
 | cols as $cols
 | (.[0] | map(select(stillNeedsMe) | . + {_approvalStats: approvalStats(.author.login; $teamLogins)}) | sort_by(.createdAt)) as $rows
+| ([$cols[] | headers[.]]) as $headerCells
 | ([$rows[] | cells as $all | [$cols[] | $all[.]]]) as $plain
-| ( [[$cols[] | headers[.]]] + $plain | transpose | map(map(length) | max) ) as $w
-| def pad($i): . + (" " * ($w[$i] - length));
-
-( [range(0; $cols | length) as $i | (headers[$cols[$i]] | pad($i))] | join("  ") | dim ),
+| colWidths($headerCells; $plain) as $w
+| renderHeaderRow($cols; headers; $w),
 
 ( range(0; $rows | length) as $r
   | $rows[$r] as $pr

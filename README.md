@@ -5,6 +5,7 @@ A [gh](https://cli.github.com/) extension for PR review triage.
 - `prd` — who has approved a PR, and who still needs to
 - `todo` — open PRs waiting on your review, including open threads you started and whether the author's answered
 - `mine` — your own open PRs: review status, approvals, open threads reviewers started and whether you've answered, CI
+- `stale-branches` — closed PRs whose head branch is still around (yours by default; `--author`/`--all` for others)
 - `notify` — poll CI until it finishes (macOS desktop notification when done)
 
 Optional Telegram links next to reviewer names, and Jira ticket links from titles/branches. Multi-repo via named profiles. Bash + jq only — no other runtime.
@@ -210,6 +211,28 @@ Open review-thread stats aren't exposed by GitHub's `--json` convenience fields,
 
 Both commands also only request the PR fields their current column set needs — size, CI, merge status, age, and Jira link all cost an extra per-PR lookup under the hood, so `--long` fetches noticeably more data than the default view.
 
+### `stale-branches` — closed PRs with a leftover branch
+
+```text
+gh pr-tools stale-branches [--limit N] [--author LOGIN | --all]
+```
+
+Lists closed PRs (merged or just closed) whose head branch is still on the remote — the ones someone meant to delete after merging but didn't. Prints a one-line summary above the table (e.g. `24 of 260 closed PRs still have a branch`) so you get the headline count even before reading the rows. Sorted oldest-closed first, since those are the ones most likely forgotten. No Jira column — `URL` is the way back to the PR here.
+
+Scope defaults to your own PRs (`author:@me`), same as `mine`/`todo`. Pass `--author LOGIN` to check someone else's instead (e.g. a manager spot-checking a teammate), or `--all` to drop the author filter and scan every closed PR in the repo. `--author`/`--all` also add an `AUTHOR` column, since results can span more than one person; the default "mine" view omits it, since it'd always just be you.
+
+Scans your `--limit` most recently updated matching closed PRs (default `1000` — GitHub search's own result ceiling, so a normal run already covers full history for one author). Lower it for a faster, narrower scan. If the matching set exceeds 1000 closed PRs (or a smaller `--limit` cuts it off), the oldest ones past that cutoff aren't scanned — the command warns on stderr when this happens rather than silently under-reporting. `--all` reaches that ceiling far sooner than the default, since it's scanning the whole repo instead of one person's history.
+
+```bash
+gh pr-tools stale-branches
+gh pr-tools stale-branches --limit 50
+gh pr-tools stale-branches --author teammate-login
+gh pr-tools stale-branches --all
+gh pr-tools -p work stale-branches
+```
+
+Uses GraphQL's `search` field directly (paginated 100 at a time) rather than `gh pr list`, so listing matching closed PRs and checking whether each one's branch still exists happens in the same query: `headRefName` is retained as a string forever even after the branch is deleted, but the actual `headRef` object turns `null` once it's gone — that's the only reliable signal, and this fetches it alongside everything else instead of a separate follow-up call.
+
 ### `notify` — watch CI
 
 ```text
@@ -290,6 +313,7 @@ lib/
   prd.sh / prd.jq       gh pr-tools prd
   todo.sh / todo.jq     gh pr-tools todo
   mine.sh / mine.jq     gh pr-tools mine
+  stale-branches.sh / stale-branches.jq  gh pr-tools stale-branches
   notify.sh / notify.jq gh pr-tools notify
   tg.sh                 gh pr-tools tg
   clear.sh              gh pr-tools clear
