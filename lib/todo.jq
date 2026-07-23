@@ -1,6 +1,7 @@
 include "common";
 
-# Inputs supplied by todo.sh: $me, $threads, $teamMembers, $jiraBase, $jiraPattern, $long
+# Inputs supplied by todo.sh: $me, $threads, $teamMembers, $teamLogins,
+# $approvalThreshold, $jiraBase, $jiraPattern, $long
 
 def yn($b): if $b then "yes" else "-" end;
 
@@ -72,13 +73,6 @@ def merge:
   else (.mergeStateStatus // "-" | ascii_downcase)
   end;
 
-def decision: .reviewDecision // "PENDING";
-
-def paintDecision:
-  if startswith("APPROVED") then green
-  elif startswith("CHANGES") then red
-  else yellow end;
-
 def paintMine:
   if startswith("approved") then green
   elif startswith("changes") then red
@@ -100,7 +94,8 @@ def cells:
     PR:         "#\(.number)",
     TITLE:      .title[0:80],
     AUTHOR:     .author.login,
-    DECISION:   decision,
+    STATUS:     approvalDecision(._approvalStats; $approvalThreshold),
+    APPROVALS:  approvalsCell(._approvalStats),
     MINE:       mineState,
     THREADS:    threadsCell(threadsMineTotal($threads); threadsMineAnswered($threads)),
     WAITING:    isoRel(waitingSince),
@@ -116,7 +111,7 @@ def cells:
 
 def headers:
   {
-    PR: "PR", TITLE: "TITLE", AUTHOR: "AUTHOR", DECISION: "DECISION", MINE: "MINE",
+    PR: "PR", TITLE: "TITLE", AUTHOR: "AUTHOR", STATUS: "STATUS", APPROVALS: "APPROVALS", MINE: "MINE",
     THREADS: "THREADS", WAITING: "WAITING", UPDATED: "UPDATED", AGE: "AGE", RE_REVIEW: "RE-REVIEW",
     SIZE: "SIZE", CI: "CI", MERGE: "MERGE", URL: "URL", JIRA: "JIRA"
   };
@@ -126,7 +121,7 @@ def headers:
 def paint($col):
   if   $col == "PR" then green
   elif $col == "AUTHOR" then cyan
-  elif $col == "DECISION" then paintDecision
+  elif $col == "STATUS" then paintDecision
   elif $col == "MINE" then paintMine
   elif $col == "RE_REVIEW" then (if . == "yes" then yellow else dim end)
   elif $col == "CI" then paintCi
@@ -136,14 +131,14 @@ def paint($col):
 
 # THREADS sits right after MINE in both column sets, rather than at the end.
 def cols:
-  if $long then ["PR", "TITLE", "AUTHOR", "DECISION", "MINE", "THREADS", "RE_REVIEW", "WAITING", "UPDATED", "AGE", "SIZE", "CI", "MERGE", "URL", "JIRA"]
-  else ["PR", "TITLE", "AUTHOR", "MINE", "THREADS", "RE_REVIEW", "WAITING", "URL"]
+  if $long then ["PR", "TITLE", "AUTHOR", "STATUS", "APPROVALS", "MINE", "THREADS", "RE_REVIEW", "WAITING", "UPDATED", "CI", "URL", "JIRA", "AGE", "SIZE", "MERGE"]
+  else ["PR", "TITLE", "AUTHOR", "STATUS", "APPROVALS", "MINE", "THREADS", "RE_REVIEW", "WAITING", "URL"]
   end;
 
 # Main
 [inputs]
 | cols as $cols
-| (.[0] | map(select(stillNeedsMe)) | sort_by(.createdAt)) as $rows
+| (.[0] | map(select(stillNeedsMe) | . + {_approvalStats: approvalStats(.author.login; $teamLogins)}) | sort_by(.createdAt)) as $rows
 | ([$rows[] | cells as $all | [$cols[] | $all[.]]]) as $plain
 | ( [[$cols[] | headers[.]]] + $plain | transpose | map(map(length) | max) ) as $w
 | def pad($i): . + (" " * ($w[$i] - length));
@@ -160,6 +155,8 @@ def cols:
           ($pr | threadsPaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "WAITING" then
           ($pr | waitingPaint) + (" " * ($w[$i] - ($c[$i] | length)))
+        elif $cols[$i] == "APPROVALS" then
+          ($pr | approvalsPaint(._approvalStats; $approvalThreshold)) + (" " * ($w[$i] - ($c[$i] | length)))
         else
           ($c[$i] | paint($cols[$i])) + (" " * ($w[$i] - ($c[$i] | length)))
         end

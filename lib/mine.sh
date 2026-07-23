@@ -22,7 +22,7 @@ ticket_pattern="${JIRA_PREFIX:-[A-Za-z]+}-[0-9]+"
 # an extra per-PR lookup under the hood. Only ask for them under --long, where
 # they're actually shown. createdAt is always fetched (cheap, part of the base
 # search response) since it drives sorting.
-fields="number,title,author,reviewDecision,reviews,headRefName,url,updatedAt,createdAt,statusCheckRollup"
+fields="number,title,author,reviews,headRefName,headRefOid,url,updatedAt,createdAt,statusCheckRollup"
 if [ "$long" = true ]; then
   fields="$fields,changedFiles,additions,deletions,mergeable,mergeStateStatus"
 fi
@@ -37,8 +37,14 @@ prs=$(gh pr list --repo "$REPO" --search "author:@me is:open -is:draft sort:crea
 # negligible for a normal workload.
 threads=$(fetch_review_threads "$prs" "$me")
 
+# Union of the current user's team memberships, for splitting APPROVALS into
+# total vs. teammate counts — see my_team_logins in common.sh.
+my_logins=$(my_team_logins "$me")
+
 jq -rn -L "$dir" \
   --argjson threads "$threads" \
+  --argjson teamLogins "$my_logins" \
+  --argjson approvalThreshold "${APPROVAL_THRESHOLD:-1}" \
   --arg jiraBase "${JIRA_BASE_URL:-}" \
   --arg jiraPattern "$ticket_pattern" \
   --argjson long "$long" \

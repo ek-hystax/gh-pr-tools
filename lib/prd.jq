@@ -1,15 +1,11 @@
 include "common";
 
-# Inputs supplied by prd.sh: $teamMembers, $tgmap, $jiraBase, $jiraPattern
+# Inputs supplied by prd.sh: $teamMembers, $teamLogins, $approvalThreshold,
+# $tgmap, $jiraBase, $jiraPattern
 
 def tglink($login):
   ($tgmap[$login] // "") as $u
   | if $u == "" then "-" else "https://t.me/\($u)" end;
-
-def paintDecision:
-  if startswith("APPROVED") then green
-  elif startswith("CHANGES") then red
-  else yellow end;
 
 def paintReason:
   if . == "changes requested" then red
@@ -22,7 +18,7 @@ def paintReason:
 
 # Latest submitted review per reviewer (PR author and pending drafts excluded)
 | ($pr | latestReviews($author)
-   | map({key: .author.login, value: {state, submittedAt}})
+   | map({key: .author.login, value: {state, submittedAt, commit}})
    | from_entries) as $latest
 
 | def reviewedReason($login):
@@ -54,21 +50,30 @@ def paintReason:
      | select(.value.state != "APPROVED")
      | {login: .key, reason: (.value.state | ascii_downcase | gsub("_"; " "))} ]) as $nonApproving
 
+# 4. Approved, but new commits have landed since (the review's own commit
+# doesn't match the PR's current head) — same staleness rule as
+# approverLogins/approvalDecision in common.jq, so this list and the
+# decision: line above never disagree about who still counts as approved.
+| ([ $latest | to_entries[]
+     | select(.value.state == "APPROVED" and (.value.commit.oid // null) != $pr.headRefOid)
+     | {login: .key, reason: "stale approval"} ]) as $staleApproved
+
 # Union, deduped by login; first reason wins
-| ($requested + $teamPending + $nonApproving
+| ($requested + $teamPending + $nonApproving + $staleApproved
    | reduce .[] as $cand ([]; if any(.[]; .login == $cand.login) then . else . + [$cand] end)
   ) as $pending
 
-# Approved: latest review is APPROVED and not overridden by a (re-)request above
+# Approved: latest review is APPROVED against the current head commit, and
+# not overridden by a (re-)request above
 | ([ $latest | to_entries[]
-     | select(.value.state == "APPROVED")
+     | select(.value.state == "APPROVED" and (.value.commit.oid // null) == $pr.headRefOid)
      | select(any($pending[]; .login == .key) | not)
      | {login: .key, submittedAt: .value.submittedAt} ]
    | sort_by(.submittedAt)) as $approved
 
 # Output
 | ( "\("#\($pr.number)" | green)  \($pr.title)" ),
-  ( "\("author:" | dim) \($pr.author.login | cyan)   \("updated:" | dim) \(isoRel($pr.updatedAt))   \("decision:" | dim) \($pr.reviewDecision // "PENDING" | paintDecision)" ),
+  ( "\("author:" | dim) \($pr.author.login | cyan)   \("updated:" | dim) \(isoRel($pr.updatedAt))   \("decision:" | dim) \(($pr | approvalStats($author; $teamLogins)) as $stats | (approvalDecision($stats; $approvalThreshold)) as $d | ($d | ascii_downcase | paintDecision))" ),
   "",
   ( "\("PR:" | dim) \($pr.url)" ),
   ( "\("Jira:" | dim) \($pr | jiraFromBranchOrTitle($jiraBase; $jiraPattern))" ),
@@ -80,7 +85,7 @@ def paintReason:
       "Approved by:",
       ( ($approved | map(.login | length) | max) as $lw
       | $approved[]
-      | "  \((.login | green) + (" " * ($lw - (.login | length))))  \(tglink(.login))"
+      | "  \((.login | green) + (" " * ($lw - (.login | length))))  \(if (.login as $l | $teamLogins | index($l)) then ("(team)" | dim) else "" end)  \(tglink(.login))"
       ),
       ""
     end ),

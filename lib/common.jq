@@ -95,8 +95,66 @@ def latestReviews($author):
   | group_by(.author.login)
   | map(sort_by(.submittedAt) | last);
 
-def approvalsCount($author):
-  [ latestReviews($author)[] | select(.state == "APPROVED") ] | length;
+# An approval is stale once new commits have landed since it was submitted —
+# i.e. the review's own commit doesn't match the PR's current head — and
+# must not count toward the approvals total or the "Approved" decision.
+def approverLogins($author):
+  .headRefOid as $head
+  | [ latestReviews($author)[]
+      | select(.state == "APPROVED" and .commit.oid == $head)
+      | .author.login ];
+
+def teamApproverLogins($author; $teamLogins):
+  [ approverLogins($author)[] | select(. as $l | $teamLogins | index($l) != null) ];
+
+def hasChangesRequested($author):
+  [ latestReviews($author)[] | select(.state == "CHANGES_REQUESTED") ] | length > 0;
+
+# Bundles the review-derived numbers the STATUS/APPROVALS cells need,
+# computed once per PR — approvalDecision/approvalsCell/approvalsPaint all
+# read from this instead of separately re-walking .reviews. $teamLogins is
+# the current user's team-membership union, resolved once per invocation by
+# my_team_logins() in common.sh — not to be confused with a per-PR
+# requested-team member map like prd.jq's own $teamMembers.
+def approvalStats($author; $teamLogins):
+  { count: (approverLogins($author) | length),
+    teamCount: (teamApproverLogins($author; $teamLogins) | length),
+    changesRequested: hasChangesRequested($author) };
+
+# "N (M)" — N distinct approvers total, M of whom are teammates.
+def approvalsCell($stats):
+  "\($stats.count) (\($stats.teamCount))";
+
+# The tool's own approval verdict, driven by the profile's
+# APPROVAL_THRESHOLD (how many approvals *this user* personally requires) —
+# independent of GitHub's reviewDecision/branch-protection rule.
+def approvalDecision($stats; $approvalThreshold):
+  if $stats.changesRequested then "Changes requested"
+  elif $stats.count >= $approvalThreshold then "Approved"
+  else "Pending review"
+  end;
+
+# Shared by mine.jq/todo.jq (Title Case cell text) and prd.jq (lowercased
+# prose) — compares case-insensitively so callers can colorize either casing
+# without duplicating this per file.
+def paintDecision:
+  (. | ascii_downcase) as $l
+  | if $l == "approved" then green
+    elif $l == "changes requested" then red
+    else yellow end;
+
+# Dims the APPROVALS count whenever the overall decision would be "Changes
+# requested", so it never contradicts the STATUS column in the same row (a
+# high approver count alongside an outstanding changes-request read as
+# "approved" otherwise). Reuses approvalDecision's own branches rather than
+# re-deriving them, so the two can never drift out of sync.
+def approvalsPaint($stats; $approvalThreshold):
+  approvalDecision($stats; $approvalThreshold) as $d
+  | approvalsCell($stats) as $text
+  | if $d == "Changes requested" then ($text | dim)
+    elif $d == "Approved" then ($text | green)
+    else ($text | dim)
+    end;
 
 # Open review-thread stats, keyed by PR number, as
 # {"mine": {"total": N, "answered": X}, "theirs": {"total": M, "answered": Y}}

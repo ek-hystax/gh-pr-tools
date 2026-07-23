@@ -49,6 +49,7 @@ case "$cmd" in
     echo "GH_USERNAME=${GH_USERNAME:-}"
     echo "JIRA_PREFIX=${JIRA_PREFIX:-}"
     echo "JIRA_BASE_URL=${JIRA_BASE_URL:-}"
+    echo "APPROVAL_THRESHOLD=${APPROVAL_THRESHOLD:-1}"
     ;;
   remove)
     name="${1:?usage: gh pr-tools profile remove <name>}"

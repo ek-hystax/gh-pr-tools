@@ -38,6 +38,13 @@ read -rp "Jira org, e.g. yourorg → https://yourorg.atlassian.net/browse (blank
 jira_base=""
 [ -n "$jira_org" ] && jira_base="https://${jira_org}.atlassian.net/browse"
 
+read -rp "Approval threshold — approvals you personally require to call a PR \"Approved\" [1]: " threshold
+threshold="${threshold:-1}"
+if ! [[ "$threshold" =~ ^[0-9]+$ ]] || [ "$threshold" -lt 1 ]; then
+  echo "gh pr-tools: approval threshold must be a positive integer" >&2
+  exit 1
+fi
+
 path=$(profile_path "$name")
 {
   printf 'REPO=%q\n' "$repo"
@@ -45,6 +52,7 @@ path=$(profile_path "$name")
   printf 'GH_USERNAME=%q\n' "$username"
   printf 'JIRA_PREFIX=%q\n' "$prefix"
   printf 'JIRA_BASE_URL=%q\n' "$jira_base"
+  printf 'APPROVAL_THRESHOLD=%q\n' "$threshold"
 } > "$path"
 
 echo "Wrote $path"

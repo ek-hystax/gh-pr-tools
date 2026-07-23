@@ -215,10 +215,39 @@ load_config() {
   source "$path"
   : "${REPO:?REPO missing in $path — re-run: gh pr-tools init}"
   : "${ORG:?ORG missing in $path — re-run: gh pr-tools init}"
+  APPROVAL_THRESHOLD="${APPROVAL_THRESHOLD:-1}"
+  # A hand-edited or pre-existing profile could set this to 0 or something
+  # non-numeric; init.sh only validates its own prompt, not the file directly.
+  [[ "$APPROVAL_THRESHOLD" =~ ^[0-9]+$ ]] && [ "$APPROVAL_THRESHOLD" -ge 1 ] || APPROVAL_THRESHOLD=1
 }
 
 team_members() { # $1: team slug -> JSON array of logins
-  gh api "orgs/$ORG/teams/$1/members" --paginate --jq '[.[].login]'
+  gh api "orgs/$ORG/teams/$1/members" --paginate \
+    | jq -s '[.[].[] | .login]'
+}
+
+my_team_slugs() { # $1: me -> newline-separated team slugs (may be empty)
+  gh api graphql \
+    -f query='query($org:String!,$me:String!){organization(login:$org){teams(first:100,userLogins:[$me]){nodes{slug}}}}' \
+    -f org="$ORG" -f me="$1" --jq '.data.organization.teams.nodes[].slug' 2>/dev/null || true
+}
+
+# Union of member logins across a newline-separated list of team slugs.
+# A failed/rate-limited lookup degrades to "[]" rather than aborting the
+# caller — same fallback policy as fetch_review_threads.
+team_logins_for_slugs() { # $1: newline-separated slugs -> JSON array of logins, deduped
+  local result='[]' slug members
+  while IFS= read -r slug; do
+    [ -n "$slug" ] || continue
+    members=$(team_members "$slug" 2>/dev/null || echo '[]')
+    result=$(jq -n --argjson a "$result" --argjson b "$members" '($a + $b) | unique')
+  done <<<"$1"
+  echo "$result"
+}
+
+# Union of member logins across every team the current user belongs to.
+my_team_logins() { # $1: me -> JSON array of logins, deduped
+  team_logins_for_slugs "$(my_team_slugs "$1")"
 }
 
 tgmap_json() {

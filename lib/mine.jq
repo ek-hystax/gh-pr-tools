@@ -1,20 +1,7 @@
 include "common";
 
-# Inputs supplied by mine.sh: $threads, $jiraBase, $jiraPattern, $long
-
-def decision:
-  if .reviewDecision == "APPROVED" then "Approved"
-  elif .reviewDecision == "CHANGES_REQUESTED" then "Changes requested"
-  else "Pending review"
-  end;
-
-def paintDecision:
-  if . == "Approved" then green
-  elif . == "Changes requested" then red
-  else yellow end;
-
-def approvals:
-  approvalsCount(.author.login);
+# Inputs supplied by mine.sh: $threads, $teamLogins, $approvalThreshold,
+# $jiraBase, $jiraPattern, $long
 
 def ci: ciState;
 def jira: jiraFromBranch($jiraBase; $jiraPattern);
@@ -61,9 +48,9 @@ def cells:
   {
     PR:         "#\(.number)",
     TITLE:      .title[0:80],
-    STATUS:     decision,
+    STATUS:     approvalDecision(._approvalStats; $approvalThreshold),
     THREADS:    threadsCell(threadsTheirsTotal($threads); threadsTheirsAnswered($threads)),
-    APPROVALS:  (approvals | tostring),
+    APPROVALS:  approvalsCell(._approvalStats),
     CI:         ci,
     URL:        .url,
     JIRA:       jira,
@@ -98,7 +85,7 @@ def cols:
 # Main
 [inputs][0]
 | cols as $cols
-| (. | sort_by(.createdAt)) as $rows
+| (. | map(. + {_approvalStats: approvalStats(.author.login; $teamLogins)}) | sort_by(.createdAt)) as $rows
 | ([$rows[] | cells as $all | [$cols[] | $all[.]]]) as $plain
 | ( [[$cols[] | headers[.]]] + $plain | transpose | map(map(length) | max) ) as $w
 | def pad($i): . + (" " * ($w[$i] - length));
@@ -115,6 +102,8 @@ def cols:
           ($pr | threadsPaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "WAITING" then
           ($pr | waitingPaint) + (" " * ($w[$i] - ($c[$i] | length)))
+        elif $cols[$i] == "APPROVALS" then
+          ($pr | approvalsPaint(._approvalStats; $approvalThreshold)) + (" " * ($w[$i] - ($c[$i] | length)))
         else
           ($c[$i] | paint($cols[$i])) + (" " * ($w[$i] - ($c[$i] | length)))
         end

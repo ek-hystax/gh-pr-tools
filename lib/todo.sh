@@ -17,14 +17,14 @@ done
 me="${GH_USERNAME:-$(gh api user --jq .login)}"
 ticket_pattern="${JIRA_PREFIX:-[A-Za-z]+}-[0-9]+"
 
-# Fields beyond the default columns (decision, size, CI, merge status,
-# Jira) cost real time: each one gh pr list --json doesn't get from the search
-# response directly requires an extra per-PR lookup under the hood. Only ask
-# for them under --long, where they're actually shown. createdAt is always
-# fetched (cheap, part of the base search response) since it drives sorting.
-fields="number,title,author,reviews,reviewRequests,url,updatedAt,createdAt"
+# Fields beyond the default columns (size, CI, merge status, Jira) cost real
+# time: each one gh pr list --json doesn't get from the search response
+# directly requires an extra per-PR lookup under the hood. Only ask for them
+# under --long, where they're actually shown. createdAt is always fetched
+# (cheap, part of the base search response) since it drives sorting.
+fields="number,title,author,reviews,reviewRequests,url,updatedAt,createdAt,headRefOid"
 if [ "$long" = true ]; then
-  fields="$fields,reviewDecision,headRefName,changedFiles,additions,deletions,mergeable,mergeStateStatus,statusCheckRollup"
+  fields="$fields,headRefName,changedFiles,additions,deletions,mergeable,mergeStateStatus,statusCheckRollup"
 fi
 
 # involves:@me / review-requested only match *direct* requests — a PR where
@@ -33,9 +33,7 @@ fi
 # one extra search per team you're on and merge the results. Needs read:org
 # (same scope as team expansion); if that fails we fall back to involves:@me
 # alone, matching the pre-team behavior.
-my_teams=$(gh api graphql \
-  -f query='query($org:String!,$me:String!){organization(login:$org){teams(first:100,userLogins:[$me]){nodes{slug}}}}' \
-  -f org="$ORG" -f me="$me" --jq '.data.organization.teams.nodes[].slug' 2>/dev/null || true)
+my_teams=$(my_team_slugs "$me")
 
 # sort:created-asc asks gh/GitHub's search API to return oldest-first, so the
 # final display order (see todo.jq's sort_by(.createdAt)) matches what the API
@@ -68,10 +66,17 @@ for slug in $(jq -r '[.[].reviewRequests[]? | .slug // empty | split("/") | last
   members=$(jq --arg t "$slug" --argjson m "$m" '. + {($t): $m}' <<<"$members")
 done
 
+# Union of the current user's team memberships, for splitting APPROVALS into
+# total vs. teammate counts. Reuses $my_teams (already fetched above) instead
+# of calling my_team_logins, which would re-run my_team_slugs a second time.
+my_logins=$(team_logins_for_slugs "$my_teams")
+
 jq -rn -L "$dir" \
   --arg me "$me" \
   --argjson threads "$threads" \
   --argjson teamMembers "$members" \
+  --argjson teamLogins "$my_logins" \
+  --argjson approvalThreshold "${APPROVAL_THRESHOLD:-1}" \
   --arg jiraBase "${JIRA_BASE_URL:-}" \
   --arg jiraPattern "$ticket_pattern" \
   --argjson long "$long" \
