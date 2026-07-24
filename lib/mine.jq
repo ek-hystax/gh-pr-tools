@@ -64,7 +64,7 @@ def headers:
   {
     PR: "PR", TITLE: "TITLE", STATUS: "STATUS", THREADS: "THREADS",
     APPROVALS: "APPROVALS", CI: "CI", URL: "URL", JIRA: "JIRA",
-    WAITING: "WAITING", AGE: "AGE", SIZE: "SIZE", MERGE: "MERGE"
+    WAITING: "PENDING SINCE", AGE: "AGE", SIZE: "SIZE", MERGE: "MERGE"
   };
 
 # SIZE, THREADS, WAITING need the raw PR object, not cell text, so the

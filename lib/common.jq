@@ -143,9 +143,9 @@ def staleTeamApproverLogins($author; $teamLogins):
 def approvalStats($author; $teamLogins):
   { count: (approverLogins($author) | length),
     teamCount: (teamApproverLogins($author; $teamLogins) | length),
-    changesRequested: hasChangesRequested($author),
     staleCount: (staleApproverLogins($author) | length),
-    staleTeamCount: (staleTeamApproverLogins($author; $teamLogins) | length) };
+    staleTeamCount: (staleTeamApproverLogins($author; $teamLogins) | length),
+    changesRequested: hasChangesRequested($author) };
 
 # "N (team M; stale K)" — N total distinct approvers (fresh + stale), team M
 # of whom are teammates (fresh + stale), with the "; stale K" segment only
@@ -160,15 +160,18 @@ def approvalsCell($stats):
 
 # The tool's own approval verdict, driven by the profile's
 # APPROVAL_THRESHOLD (how many approvals *this user* personally requires) —
-# independent of GitHub's reviewDecision/branch-protection rule. "Approved
-# (stale)" only fires when fresh + stale approvers together meet the
-# threshold; below threshold even counting stale approvers, it's "Pending
-# review".
+# independent of GitHub's reviewDecision/branch-protection rule. An active
+# CHANGES_REQUESTED review from any reviewer blocks "Approved"/"Approved
+# (stale)" outright — it folds into "Awaiting Approval" rather than getting
+# its own distinct label, but it's never silently overridden by other
+# reviewers' approvals meeting the threshold. "Approved (stale)" only fires
+# when fresh + stale approvers together meet the threshold; below threshold
+# even counting stale approvers, it's "Awaiting Approval".
 def approvalDecision($stats; $approvalThreshold):
-  if $stats.changesRequested then "Changes requested"
+  if $stats.changesRequested then "Awaiting Approval"
   elif $stats.count >= $approvalThreshold then "Approved"
   elif $stats.staleCount > 0 and ($stats.count + $stats.staleCount) >= $approvalThreshold then "Approved (stale)"
-  else "Pending review"
+  else "Awaiting Approval"
   end;
 
 # Shared by mine.jq/todo.jq (Title Case cell text) and prd.jq (lowercased
@@ -179,28 +182,26 @@ def approvalDecision($stats; $approvalThreshold):
 def paintDecision:
   (. | ascii_downcase) as $l
   | if $l == "approved" then green
-    elif $l == "changes requested" then red
     elif $l == "approved (stale)" then (.[0:8] | green) + (.[8:] | yellow)
     else yellow end;
 
-# Colors the APPROVALS cell to match the STATUS decision for the same row:
-# the "total (team teamTotal" part and the closing ")" are dim for
-# "Pending review"/"Changes requested" and green for "Approved"; the
-# "stale K" segment is always yellow. Must produce the exact same visible
-# characters as approvalsCell above — only ANSI codes differ — since
-# colWidths pads rows based on that plain-text length.
+# Colors just the leading total (fresh + stale) green once it meets the
+# profile's approval threshold *and* nothing is currently blocking it (i.e.
+# approvalDecision doesn't say "Awaiting Approval"), dim otherwise; " (team
+# M...)" stays dim and the "stale K" segment is always yellow regardless of
+# threshold. Must produce the exact same visible characters as approvalsCell
+# above — only ANSI codes differ — since colWidths pads rows based on that
+# plain-text length.
 def approvalsPaint($stats; $approvalThreshold):
-  approvalDecision($stats; $approvalThreshold) as $d
+  (approvalDecision($stats; $approvalThreshold) != "Awaiting Approval") as $met
   | ($stats.count + $stats.staleCount) as $total
   | ($stats.teamCount + $stats.staleTeamCount) as $teamTotal
-  | "\($total) (team \($teamTotal)" as $prefix
-  | (if $stats.staleCount > 0 then "; " else "" end) as $sep
+  | (if $met then ("\($total)" | green) else ("\($total)" | dim) end) as $num
+  | (" (team \($teamTotal)" | dim) as $mid
+  | (if $stats.staleCount > 0 then ("; " | dim) else "" end) as $sep
   | (if $stats.staleCount > 0 then ("stale \($stats.staleCount)" | yellow) else "" end) as $staleNum
-  | ")" as $suffix
-  | if $d == "Changes requested" then ($prefix | dim) + ($sep | dim) + $staleNum + ($suffix | dim)
-    elif $d == "Approved" then ($prefix | green) + ($sep | green) + $staleNum + ($suffix | green)
-    else ($prefix | dim) + ($sep | dim) + $staleNum + ($suffix | dim)
-    end;
+  | (")" | dim) as $suffix
+  | $num + $mid + $sep + $staleNum + $suffix;
 
 # Open review-thread stats, keyed by PR number, as
 # {"mine": {"total": N, "answered": X}, "theirs": {"total": M, "answered": Y}}

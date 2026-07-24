@@ -3,7 +3,7 @@
 A [gh](https://cli.github.com/) extension for PR review triage.
 
 - `prd` — who has approved a PR, and who still needs to
-- `todo` — open PRs waiting on your review, including open threads you started and whether the author's answered
+- `todo` — open PRs you're a reviewer on (whether or not you've already approved), including open threads you started and whether the author's answered
 - `mine` — your own open PRs: review status, approvals, open threads reviewers started and whether you've answered, CI
 - `stale-branches` — closed PRs whose head branch is still around (yours by default; `--author`/`--all` for others)
 - `notify` — poll CI until it finishes (macOS desktop notification when done)
@@ -75,7 +75,7 @@ Who's approved a PR, and who's still pending:
 gh pr-tools prd 886
 ```
 
-Open PRs waiting on your review:
+Open PRs you're a reviewer on:
 
 ```bash
 gh pr-tools todo
@@ -175,19 +175,21 @@ gh pr-tools prd bug/KF-1309
 gh pr-tools -p work prd 886
 ```
 
-### `todo` — PRs waiting on you
+### `todo` — PRs you're reviewing
 
 ```text
 gh pr-tools todo [--long]
 ```
 
-Lists open PRs where you're a pending reviewer. By default shows a compact table (PR, title, author, status, approvals, your review state, open threads, how long it's been waiting on you, URL); pass `--long` for all columns, adding last-updated, age, re-review, size, CI, merge status, and Jira link.
+Lists open PRs where you're an actual reviewer — currently requested, or you've left any review, including ones you've already approved. By default shows a compact table (PR, title, author, status, your review state, approvals, open threads, whether new changes landed since your review, how long it's been in its current state, URL); pass `--long` for all columns, adding last-updated, age, size, CI, merge status, and Jira link.
 
 The `THREADS` column only counts review threads *you* opened that are still open (unresolved) — a thread is attributed to whoever left its opening comment, not every participant. It shows `N (A answered)`: `N` is how many of your threads are still open, `A` is how many the PR author has since replied to (e.g. "Fixed") even though the thread is still open — those are the ones worth going back to re-check, so the answered count is highlighted when non-zero. Shows `-` when you have nothing open.
 
-`STATUS` and `APPROVALS` use the same threshold-based logic as `mine` (see below) rather than GitHub's `reviewDecision`: "Changes requested" if any reviewer's latest review requests changes, "Approved" once distinct approvals meet your profile's approval threshold, otherwise "Pending review". `APPROVALS` shows `total (team)` — total distinct approvers, and in parens how many are members of a team you belong to.
+`STATUS` and `APPROVALS` use the same threshold-based logic as `mine` (see below) rather than GitHub's `reviewDecision`: "Approved" once distinct approvals meet your profile's approval threshold, "Approved (stale)" if the threshold is only met by counting approvers whose approval is against an older commit, otherwise "Awaiting Approval" — this column doesn't distinguish an outright changes-requested review from one nobody has looked at yet. `APPROVALS` shows `total (team)` — total distinct approvers, and in parens how many are members of a team you belong to.
 
-The `WAITING` column is color-graded by how long a review has been outstanding on you — dim under a day, plain 1–3 days, yellow 3–7 days, bold red past a week — so the oldest unaddressed reviews stand out by default. `--long`'s `UPDATED` column is different: the PR's raw last-activity time, not specific to your own review.
+`NEW CHANGES` shows `yes` when new commits have landed on the PR since your last review (i.e. you should look again), `-` otherwise.
+
+The `PENDING SINCE` column is color-graded by how long the PR has been in its current state relative to you — dim under a day, plain 1–3 days, yellow 3–7 days, bold red past a week — so the oldest unaddressed reviews stand out by default. `--long`'s `UPDATED` column is different: the PR's raw last-activity time, not specific to your own review.
 
 ### `mine` — your own open PRs
 
@@ -195,11 +197,11 @@ The `WAITING` column is color-graded by how long a review has been outstanding o
 gh pr-tools mine [--long]
 ```
 
-Lists your own open, non-draft PRs with the columns you need to triage them: review status (Approved / Changes requested / Pending review), open review threads, how long it's been waiting (`WAITING`, same color grading as `todo`), number of approvals, CI status, PR URL, and Jira link (same branch-name convention as `todo`). Pass `--long` to add age, size, and merge status.
+Lists your own open, non-draft PRs with the columns you need to triage them: review status (Approved / Approved (stale) / Awaiting Approval), open review threads, how long it's been pending (`PENDING SINCE`, same color grading as `todo`), number of approvals, CI status, PR URL, and Jira link (same branch-name convention as `todo`). Pass `--long` to add age, size, and merge status.
 
-`STATUS` is driven by your profile's approval threshold, not GitHub's `reviewDecision` field: it's "Changes requested" if any reviewer's latest review requests changes, "Approved" once distinct approvals meet your threshold, otherwise "Pending review". `APPROVALS` shows `total (team)` — total distinct approvers, and in parens how many of those are members of a team you belong to — colored green once the total meets your threshold. Set your threshold via `gh pr-tools init` or check it with `gh pr-tools profile show`.
+`STATUS` is driven by your profile's approval threshold, not GitHub's `reviewDecision` field: it's "Approved" once distinct approvals meet your threshold, "Approved (stale)" if the threshold is only met by counting approvers whose approval is against an older commit, otherwise "Awaiting Approval" — this column doesn't distinguish an outright changes-requested review from one nobody has looked at yet. `APPROVALS` shows `total (team)` — total distinct approvers, and in parens how many of those are members of a team you belong to — colored green once the total meets your threshold. Set your threshold via `gh pr-tools init` or check it with `gh pr-tools profile show`.
 
-The `THREADS` column only counts review threads *reviewers* opened that are still open (unresolved) — a thread is attributed to whoever left its opening comment, not every participant. It shows `N (A answered)`: `N` is how many are still open, `A` is how many you've already replied to (those are now waiting on the reviewer next). The unanswered remainder — the ones you haven't replied to yet — is what's highlighted, since that's what still needs you. Shows `-` when there's nothing open.
+The `THREADS` column only counts review threads *reviewers* opened that are still open (unresolved) — a thread is attributed to whoever left its opening comment, not every participant. It shows `N (A answered)`: `N` is how many are still open, `A` is how many you've already replied to (those are now waiting on the reviewer next). The `A answered` count is highlighted when some threads remain unanswered; those unanswered threads are the ones still needing your reply. Shows `-` when there's nothing open.
 
 ```bash
 gh pr-tools mine

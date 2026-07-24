@@ -30,7 +30,21 @@ def waitingSince:
     else $m.submittedAt
     end;
 
-def waitingPaint: waitingPaintFor(waitingSince);
+# Whether anything is still pending on me specifically — false once I've
+# given a fresh (non-stale) approval and no new commits have landed since.
+# Used to keep PENDING SINCE's urgency coloring from escalating on rows
+# iAmReviewer includes but that don't actually need my attention.
+def needsMyAction:
+  mine as $m
+  | ($m == null or $m.state != "APPROVED" or needsRereview);
+
+# Escalating urgency color only applies while something's still pending on
+# me; once I've already given a fresh approval, show the elapsed time dim
+# regardless of age instead of falsely flagging it as overdue.
+def waitingPaint:
+  if needsMyAction then waitingPaintFor(waitingSince)
+  else (isoRel(waitingSince) | dim)
+  end;
 
 # Matches both a direct request (.login == $me) and a team request where
 # $me is a member of the requested team (.slug, resolved via $teamMembers).
@@ -39,13 +53,13 @@ def requestedFromMe:
   or ([ .reviewRequests[]? | select(.slug) | (.slug | split("/") | last) ] as $teams
       | any($teams[]; $teamMembers[.] // [] | index($me) != null));
 
-# Only PRs where I'm an actual reviewer (currently requested, or I've left
-# a review): keep pending requests, comments, changes-requested; drop
-# stale approvals.
-def stillNeedsMe:
+# Any PR where I'm an actual reviewer (currently requested, or I've left any
+# review) — including ones where I've already given a fresh approval and
+# nothing further is needed from me; MINE/STATUS/NEW CHANGES already convey
+# that state, so this list doesn't need to filter them out.
+def iAmReviewer:
   mine as $m
-  | ($m != null or requestedFromMe)
-    and ($m == null or $m.state != "APPROVED" or needsRereview);
+  | ($m != null or requestedFromMe);
 
 def size:
   "\(.changedFiles // 0)f +\(.additions // 0)/-\(.deletions // 0)";
@@ -112,7 +126,7 @@ def cells:
 def headers:
   {
     PR: "PR", TITLE: "TITLE", AUTHOR: "AUTHOR", STATUS: "STATUS", APPROVALS: "APPROVALS", MINE: "MINE",
-    THREADS: "THREADS", WAITING: "WAITING", UPDATED: "UPDATED", AGE: "AGE", RE_REVIEW: "RE-REVIEW",
+    THREADS: "THREADS", WAITING: "PENDING SINCE", UPDATED: "UPDATED", AGE: "AGE", RE_REVIEW: "NEW CHANGES",
     SIZE: "SIZE", CI: "CI", MERGE: "MERGE", URL: "URL", JIRA: "JIRA"
   };
 
@@ -131,14 +145,14 @@ def paint($col):
 
 # THREADS sits right after MINE in both column sets, rather than at the end.
 def cols:
-  if $long then ["PR", "TITLE", "AUTHOR", "STATUS", "APPROVALS", "MINE", "THREADS", "RE_REVIEW", "WAITING", "UPDATED", "CI", "URL", "JIRA", "AGE", "SIZE", "MERGE"]
-  else ["PR", "TITLE", "AUTHOR", "STATUS", "APPROVALS", "MINE", "THREADS", "RE_REVIEW", "WAITING", "URL"]
+  if $long then ["PR", "TITLE", "AUTHOR", "STATUS", "MINE", "APPROVALS", "THREADS", "RE_REVIEW", "WAITING", "UPDATED", "CI", "URL", "JIRA", "AGE", "SIZE", "MERGE"]
+  else ["PR", "TITLE", "AUTHOR", "STATUS", "MINE", "APPROVALS", "THREADS", "RE_REVIEW", "WAITING", "URL"]
   end;
 
 # Main
 [inputs]
 | cols as $cols
-| (.[0] | map(select(stillNeedsMe) | . + {_approvalStats: approvalStats(.author.login; $teamLogins)}) | sort_by(.createdAt)) as $rows
+| (.[0] | map(select(iAmReviewer) | . + {_approvalStats: approvalStats(.author.login; $teamLogins)}) | sort_by(.createdAt)) as $rows
 | ([$cols[] | headers[.]]) as $headerCells
 | ([$rows[] | cells as $all | [$cols[] | $all[.]]]) as $plain
 | colWidths($headerCells; $plain) as $w
