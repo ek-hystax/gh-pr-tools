@@ -50,7 +50,7 @@ def cells:
     TITLE:      .title[0:80],
     STATUS:     approvalDecision(._approvalStats; $approvalThreshold),
     THREADS:    threadsCell(threadsTheirsTotal($threads); threadsTheirsAnswered($threads)),
-    APPROVALS:  approvalsCell(._approvalStats),
+    APPROVALS:  approvalsCell(._approvalStats; $approvalThreshold),
     CI:         ci,
     URL:        .url,
     JIRA:       jira,

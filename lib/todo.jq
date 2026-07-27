@@ -109,7 +109,7 @@ def cells:
     TITLE:      .title[0:80],
     AUTHOR:     .author.login,
     STATUS:     approvalDecision(._approvalStats; $approvalThreshold),
-    APPROVALS:  approvalsCell(._approvalStats),
+    APPROVALS:  approvalsCell(._approvalStats; $approvalThreshold),
     MINE:       mineState,
     THREADS:    threadsCell(threadsMineTotal($threads); threadsMineAnswered($threads)),
     WAITING:    isoRel(waitingSince),

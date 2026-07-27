@@ -147,16 +147,17 @@ def approvalStats($author; $teamLogins):
     staleTeamCount: (staleTeamApproverLogins($author; $teamLogins) | length),
     changesRequested: hasChangesRequested($author) };
 
-# "N (team M; stale K)" — N total distinct approvers (fresh + stale), team M
-# of whom are teammates (fresh + stale), with the "; stale K" segment only
-# shown when K > 0. approvalStats keeps fresh and stale counts separate;
-# this is where they're combined for display. Must render the exact same
-# visible characters as approvalsPaint below (colWidths sizes columns off
-# this plain form).
-def approvalsCell($stats):
+# "N/Y (team M; stale K)" — N total distinct approvers (fresh + stale) out
+# of Y required (the profile's APPROVAL_THRESHOLD), team M of whom are
+# teammates (fresh + stale), with the "; stale K" segment only shown when
+# K > 0. approvalStats keeps fresh and stale counts separate; this is where
+# they're combined for display. Must render the exact same visible
+# characters as approvalsPaint below (colWidths sizes columns off this
+# plain form).
+def approvalsCell($stats; $approvalThreshold):
   ($stats.count + $stats.staleCount) as $total
   | ($stats.teamCount + $stats.staleTeamCount) as $teamTotal
-  | "\($total) (team \($teamTotal)\(if $stats.staleCount > 0 then "; stale \($stats.staleCount)" else "" end))";
+  | "\($total)/\($approvalThreshold) (team \($teamTotal)\(if $stats.staleCount > 0 then "; stale \($stats.staleCount)" else "" end))";
 
 # The tool's own approval verdict, driven by the profile's
 # APPROVAL_THRESHOLD (how many approvals *this user* personally requires) —
@@ -196,7 +197,7 @@ def approvalsPaint($stats; $approvalThreshold):
   (approvalDecision($stats; $approvalThreshold) != "Awaiting Approval") as $met
   | ($stats.count + $stats.staleCount) as $total
   | ($stats.teamCount + $stats.staleTeamCount) as $teamTotal
-  | (if $met then ("\($total)" | green) else ("\($total)" | dim) end) as $num
+  | (if $met then ("\($total)/\($approvalThreshold)" | green) else ("\($total)/\($approvalThreshold)" | dim) end) as $num
   | (" (team \($teamTotal)" | dim) as $mid
   | (if $stats.staleCount > 0 then ("; " | dim) else "" end) as $sep
   | (if $stats.staleCount > 0 then ("stale \($stats.staleCount)" | yellow) else "" end) as $staleNum
