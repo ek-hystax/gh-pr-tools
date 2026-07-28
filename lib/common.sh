@@ -226,28 +226,72 @@ team_members() { # $1: team slug -> JSON array of logins
     | jq -s '[.[].[] | .login]'
 }
 
-my_team_slugs() { # $1: me -> newline-separated team slugs (may be empty)
-  gh api graphql \
-    -f query='query($org:String!,$me:String!){organization(login:$org){teams(first:100,userLogins:[$me]){nodes{slug}}}}' \
-    -f org="$ORG" -f me="$1" --jq '.data.organization.teams.nodes[].slug' 2>/dev/null || true
+# Every team the current user belongs to, together with its member logins,
+# in a single GraphQL call — replacing a slug lookup plus one REST members
+# call per team. A team with >100 members is completed via paginated REST
+# (team_members), keeping the common case at one round trip without silently
+# truncating big teams. A failed/rate-limited lookup degrades to "no teams"
+# rather than aborting the caller — same fallback policy as
+# fetch_pr_review_state.
+#
+# Args: $1 = me.
+# Prints: {slugs: ["<slug>", ...], members: {"<slug>": ["login", ...]}}
+my_teams_with_members() {
+  local me="$1" empty='{"slugs":[],"members":{}}' result slug m
+  result=$(gh api graphql \
+    -f query='query($org:String!,$me:String!){organization(login:$org){teams(first:100,userLogins:[$me]){nodes{slug members(first:100){pageInfo{hasNextPage} nodes{login}}}}}}' \
+    -f org="$ORG" -f me="$me" 2>/dev/null \
+    | jq '{slugs: [.data.organization.teams.nodes[].slug],
+           members: ([.data.organization.teams.nodes[]
+                      | {key: .slug,
+                         value: {logins: [.members.nodes[].login],
+                                 more: .members.pageInfo.hasNextPage}}]
+                     | from_entries)}') || { echo "$empty"; return; }
+  echo "$result" | jq -e . >/dev/null 2>&1 || { echo "$empty"; return; }
+  for slug in $(jq -r '.members | to_entries[] | select(.value.more) | .key' <<<"$result"); do
+    m=$(team_members "$slug" 2>/dev/null || echo '[]')
+    result=$(jq --arg s "$slug" --argjson m "$m" '.members[$s] = {logins: $m, more: false}' <<<"$result")
+  done
+  jq '.members |= map_values(.logins)' <<<"$result"
 }
 
-# Union of member logins across a newline-separated list of team slugs.
-# A failed/rate-limited lookup degrades to "[]" rather than aborting the
-# caller — same fallback policy as fetch_pr_review_state.
-team_logins_for_slugs() { # $1: newline-separated slugs -> JSON array of logins, deduped
-  local result='[]' slug members
+# Member logins for a set of team slugs, batched into one aliased GraphQL
+# call rather than one REST round trip per team. Like my_teams_with_members,
+# a team with >100 members is completed via paginated REST. Unknown slugs
+# resolve to null server-side and are dropped from the map. Unlike the
+# degrade-to-empty lookups above, a failed call aborts the caller (set -e) —
+# same behavior as the per-slug team_members loops this replaces.
+#
+# Args: $1 = newline-separated team slugs.
+# Prints a JSON map: {"<slug>": ["login", ...]}.
+teams_members_map() {
+  local slugs="$1" slug m i=0 fields="" query result
   while IFS= read -r slug; do
     [ -n "$slug" ] || continue
-    members=$(team_members "$slug" 2>/dev/null || echo '[]')
-    result=$(jq -n --argjson a "$result" --argjson b "$members" '($a + $b) | unique')
-  done <<<"$1"
-  echo "$result"
+    # Slugs are interpolated into the query text; anything outside GitHub's
+    # slug alphabet can't be a real team, so skip it rather than quote it.
+    [[ "$slug" =~ ^[A-Za-z0-9_.-]+$ ]] || continue
+    fields+="t${i}:team(slug:\"${slug}\"){slug members(first:100){pageInfo{hasNextPage} nodes{login}}} "
+    i=$((i+1))
+  done <<<"$slugs"
+  [ "$i" -gt 0 ] || { echo '{}'; return; }
+  query="query(\$org:String!){organization(login:\$org){${fields}}}"
+  result=$(gh api graphql -f query="$query" -f org="$ORG" \
+    | jq '[.data.organization | to_entries[] | .value | select(. != null)
+           | {key: .slug,
+              value: {logins: [.members.nodes[].login],
+                      more: .members.pageInfo.hasNextPage}}]
+          | from_entries')
+  for slug in $(jq -r 'to_entries[] | select(.value.more) | .key' <<<"$result"); do
+    m=$(team_members "$slug")
+    result=$(jq --arg s "$slug" --argjson m "$m" '.[$s] = {logins: $m, more: false}' <<<"$result")
+  done
+  jq 'map_values(.logins)' <<<"$result"
 }
 
 # Union of member logins across every team the current user belongs to.
 my_team_logins() { # $1: me -> JSON array of logins, deduped
-  team_logins_for_slugs "$(my_team_slugs "$1")"
+  my_teams_with_members "$1" | jq '[.members[][]] | unique'
 }
 
 tgmap_json() {

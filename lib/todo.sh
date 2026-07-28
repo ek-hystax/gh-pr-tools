@@ -33,7 +33,11 @@ fi
 # one extra search per team you're on and merge the results. Needs read:org
 # (same scope as team expansion); if that fails we fall back to involves:@me
 # alone, matching the pre-team behavior.
-my_teams=$(my_team_slugs "$me")
+# One GraphQL call returns every team you're on together with its member
+# logins — the slugs drive the extra team-review-requested searches below,
+# and the members feed the APPROVALS teammate split further down.
+my_teams_json=$(my_teams_with_members "$me")
+my_teams=$(jq -r '.slugs[]' <<<"$my_teams_json")
 
 # sort:created-asc asks gh/GitHub's search API to return oldest-first, so the
 # final display order (see todo.jq's sort_by(.createdAt)) matches what the API
@@ -61,17 +65,14 @@ viewed=$(jq '.viewed' <<<"$review_state")
 
 # Resolve each requested team to its member logins so todo.jq can tell whether
 # $me is covered by a team request (same map prd.jq uses). reviewRequests
-# serializes team slugs as "org/slug"; the API path needs the bare slug.
-members='{}'
-for slug in $(jq -r '[.[].reviewRequests[]? | .slug // empty | split("/") | last] | unique | .[]' <<<"$prs"); do
-  m=$(team_members "$slug")
-  members=$(jq --arg t "$slug" --argjson m "$m" '. + {($t): $m}' <<<"$members")
-done
+# serializes team slugs as "org/slug"; the lookup needs the bare slug. All
+# requested teams are fetched in one aliased call — see teams_members_map.
+members=$(teams_members_map "$(jq -r '[.[].reviewRequests[]? | .slug // empty | split("/") | last] | unique | .[]' <<<"$prs")")
 
 # Union of the current user's team memberships, for splitting APPROVALS into
-# total vs. teammate counts. Reuses $my_teams (already fetched above) instead
-# of calling my_team_logins, which would re-run my_team_slugs a second time.
-my_logins=$(team_logins_for_slugs "$my_teams")
+# total vs. teammate counts. Reuses $my_teams_json (already fetched above)
+# instead of calling my_team_logins, which would re-run the teams query.
+my_logins=$(jq '[.members[][]] | unique' <<<"$my_teams_json")
 
 jq -rn -L "$dir" \
   --arg me "$me" \
