@@ -208,7 +208,7 @@ resolve_pr() {
 }
 
 load_config() {
-  local name path
+  local name path env_cache="${GH_PR_TOOLS_TEAM_CACHE:-}"
   name=$(resolve_profile)
   path=$(profile_path "$name")
   # shellcheck source=/dev/null
@@ -219,35 +219,111 @@ load_config() {
   # A hand-edited or pre-existing profile could set this to 0 or something
   # non-numeric; init.sh only validates its own prompt, not the file directly.
   [[ "$APPROVAL_THRESHOLD" =~ ^[0-9]+$ ]] && [ "$APPROVAL_THRESHOLD" -ge 1 ] || APPROVAL_THRESHOLD=1
+  # Resolved here rather than when this file is sourced, so a profile can set
+  # GH_PR_TOOLS_TEAM_CACHE like every other setting; an environment value
+  # still wins, since that's the documented per-invocation override.
+  team_cache_ttl="${env_cache:-${GH_PR_TOOLS_TEAM_CACHE:-$team_cache_default}}"
+  if ! valid_gh_duration "$team_cache_ttl"; then
+    echo "gh pr-tools: ignoring invalid GH_PR_TOOLS_TEAM_CACHE '$team_cache_ttl'" \
+         "(expected a duration like 30m, 1h30m, or 0) — using $team_cache_default" >&2
+    team_cache_ttl="$team_cache_default"
+  fi
+}
+
+# Team rosters change rarely, so every team lookup below is served from gh's
+# local response cache (gh api --cache) for up to this long — warm runs skip
+# those round trips and their API quota. The trade-off: a roster change can
+# take up to the TTL to show up in the APPROVALS/team columns. Override with
+# GH_PR_TOOLS_TEAM_CACHE, in the environment or in a profile (any gh
+# duration; 0 bypasses the cache).
+# PR data (searches, reviews, threads) is never cached — it must stay live.
+team_cache_default=1h
+# Fallback for the few code paths that use a team lookup without load_config;
+# load_config overwrites this with the validated profile/environment value.
+team_cache_ttl="$team_cache_default"
+
+# gh's --cache takes a Go duration: one or more <number><unit> pairs, or a
+# bare 0. gh rejects anything else *before* making the request, which the
+# lookups below either report as a hard failure (teams_members_map) or
+# silently degrade into "you're on no teams" (my_teams_with_members) — so
+# catch a bad value once, up front, instead of letting it look like an empty
+# roster.
+valid_gh_duration() {
+  [ "$1" = "0" ] && return 0
+  [[ "$1" =~ ^([0-9]+(\.[0-9]+)?(ns|us|ms|s|m|h))+$ ]]
 }
 
 team_members() { # $1: team slug -> JSON array of logins
-  gh api "orgs/$ORG/teams/$1/members" --paginate \
+  gh api "orgs/$ORG/teams/$1/members" --paginate --cache "$team_cache_ttl" \
     | jq -s '[.[].[] | .login]'
 }
 
-my_team_slugs() { # $1: me -> newline-separated team slugs (may be empty)
-  gh api graphql \
-    -f query='query($org:String!,$me:String!){organization(login:$org){teams(first:100,userLogins:[$me]){nodes{slug}}}}' \
-    -f org="$ORG" -f me="$1" --jq '.data.organization.teams.nodes[].slug' 2>/dev/null || true
+# Every team the current user belongs to, together with its member logins,
+# in a single GraphQL call — replacing a slug lookup plus one REST members
+# call per team. A team with >100 members is completed via paginated REST
+# (team_members), keeping the common case at one round trip without silently
+# truncating big teams. A failed/rate-limited lookup degrades to "no teams"
+# rather than aborting the caller — same fallback policy as
+# fetch_pr_review_state.
+#
+# Args: $1 = me.
+# Prints: {slugs: ["<slug>", ...], members: {"<slug>": ["login", ...]}}
+my_teams_with_members() {
+  local me="$1" empty='{"slugs":[],"members":{}}' result slug m
+  result=$(gh api graphql --cache "$team_cache_ttl" \
+    -f query='query($org:String!,$me:String!){organization(login:$org){teams(first:100,userLogins:[$me]){nodes{slug members(first:100){pageInfo{hasNextPage} nodes{login}}}}}}' \
+    -f org="$ORG" -f me="$me" 2>/dev/null \
+    | jq '{slugs: [.data.organization.teams.nodes[].slug],
+           members: ([.data.organization.teams.nodes[]
+                      | {key: .slug,
+                         value: {logins: [.members.nodes[].login],
+                                 more: .members.pageInfo.hasNextPage}}]
+                     | from_entries)}') || { echo "$empty"; return; }
+  echo "$result" | jq -e . >/dev/null 2>&1 || { echo "$empty"; return; }
+  for slug in $(jq -r '.members | to_entries[] | select(.value.more) | .key' <<<"$result"); do
+    m=$(team_members "$slug" 2>/dev/null || echo '[]')
+    result=$(jq --arg s "$slug" --argjson m "$m" '.members[$s] = {logins: $m, more: false}' <<<"$result")
+  done
+  jq '.members |= map_values(.logins)' <<<"$result"
 }
 
-# Union of member logins across a newline-separated list of team slugs.
-# A failed/rate-limited lookup degrades to "[]" rather than aborting the
-# caller — same fallback policy as fetch_review_threads.
-team_logins_for_slugs() { # $1: newline-separated slugs -> JSON array of logins, deduped
-  local result='[]' slug members
+# Member logins for a set of team slugs, batched into one aliased GraphQL
+# call rather than one REST round trip per team. Like my_teams_with_members,
+# a team with >100 members is completed via paginated REST. Unknown slugs
+# resolve to null server-side and are dropped from the map. Unlike the
+# degrade-to-empty lookups above, a failed call aborts the caller (set -e) —
+# same behavior as the per-slug team_members loops this replaces.
+#
+# Args: $1 = newline-separated team slugs.
+# Prints a JSON map: {"<slug>": ["login", ...]}.
+teams_members_map() {
+  local slugs="$1" slug m i=0 fields="" query result
   while IFS= read -r slug; do
     [ -n "$slug" ] || continue
-    members=$(team_members "$slug" 2>/dev/null || echo '[]')
-    result=$(jq -n --argjson a "$result" --argjson b "$members" '($a + $b) | unique')
-  done <<<"$1"
-  echo "$result"
+    # Slugs are interpolated into the query text; anything outside GitHub's
+    # slug alphabet can't be a real team, so skip it rather than quote it.
+    [[ "$slug" =~ ^[A-Za-z0-9_.-]+$ ]] || continue
+    fields+="t${i}:team(slug:\"${slug}\"){slug members(first:100){pageInfo{hasNextPage} nodes{login}}} "
+    i=$((i+1))
+  done <<<"$slugs"
+  [ "$i" -gt 0 ] || { echo '{}'; return; }
+  query="query(\$org:String!){organization(login:\$org){${fields}}}"
+  result=$(gh api graphql --cache "$team_cache_ttl" -f query="$query" -f org="$ORG" \
+    | jq '[.data.organization | to_entries[] | .value | select(. != null)
+           | {key: .slug,
+              value: {logins: [.members.nodes[].login],
+                      more: .members.pageInfo.hasNextPage}}]
+          | from_entries')
+  for slug in $(jq -r 'to_entries[] | select(.value.more) | .key' <<<"$result"); do
+    m=$(team_members "$slug")
+    result=$(jq --arg s "$slug" --argjson m "$m" '.[$s] = {logins: $m, more: false}' <<<"$result")
+  done
+  jq 'map_values(.logins)' <<<"$result"
 }
 
 # Union of member logins across every team the current user belongs to.
 my_team_logins() { # $1: me -> JSON array of logins, deduped
-  team_logins_for_slugs "$(my_team_slugs "$1")"
+  my_teams_with_members "$1" | jq '[.members[][]] | unique'
 }
 
 tgmap_json() {
@@ -322,94 +398,76 @@ fetch_closed_prs_with_branch_status() {
     '{prs: $prs, truncated: $truncated}'
 }
 
-# Open (non-resolved) review-thread stats aren't exposed by `gh pr list`/`pr
-# view --json` (no reviewThreads field), so fetch via GraphQL. Threads are
-# split by who left the *opening* comment (a static fact about the thread,
-# not an activity trace of every reply): $2 ("mine") vs anyone else
-# ("theirs"). Each bucket also tracks how many threads are "answered" — the
-# *last* comment's author is the PR's owner, meaning the owner has since
+# Open (non-resolved) review-thread stats and viewed-file stats aren't
+# exposed by `gh pr list`/`pr view --json` (no reviewThreads/files fields), so
+# fetch via GraphQL. Both are per-PR lookups, so they share one batched query
+# (one aliased pullRequest field per PR carrying both selections) — a single
+# round trip for the whole PR list instead of two, and instead of one per PR.
+#
+# Threads are split by who left the *opening* comment (a static fact about
+# the thread, not an activity trace of every reply): $2 ("mine") vs anyone
+# else ("theirs"). Each bucket also tracks how many threads are "answered" —
+# the *last* comment's author is the PR's owner, meaning the owner has since
 # replied (e.g. "Fixed") even though the thread is still open.
 #
-# All PRs are fetched in a single GraphQL call (one aliased pullRequest field
-# per PR) rather than one round trip per PR — with a dozen+ open PRs, N
-# sequential round trips is the dominant cost of the whole command.
-#
 # Args: $1 = JSON array of PRs (needs .number and .author.login), $2 = login
-# to attribute as "mine".
-# Prints a JSON map: {"<number>": {"mine": {"total": N, "answered": X},
-#                                  "theirs": {"total": M, "answered": Y}}}.
-fetch_review_threads() {
-  local prs="$1" me="$2" owner repo_name numbers number query result
+# to attribute as "mine", $3 = "threads" to skip the viewed-file half (the
+# fallback below is all-or-nothing, so a caller with no VIEWED column
+# shouldn't pay for that selection — or risk losing its thread stats to an
+# error in data it never renders). Default: both.
+# Prints: {threads: {"<number>": {"mine": {"total": N, "answered": X},
+#                                 "theirs": {"total": M, "answered": Y}}},
+#          viewed:  {"<number>": {"viewed": N, "total": M}}}
+# With $3 = "threads", .viewed is an empty map.
+fetch_pr_review_state() {
+  local prs="$1" me="$2" want="${3:-all}" owner repo_name numbers number query result
+  local empty='{"threads":{},"viewed":{}}' files_sel="" want_viewed=true
+  if [ "$want" = "threads" ]; then
+    want_viewed=false
+  else
+    files_sel="files(first:100){nodes{path viewerViewedState}}"
+  fi
   owner="${REPO%%/*}"
   repo_name="${REPO##*/}"
   numbers=$(jq -r '.[].number' <<<"$prs")
-  [ -n "$numbers" ] || { echo '{}'; return; }
+  [ -n "$numbers" ] || { echo "$empty"; return; }
 
   query="query(\$owner:String!,\$repo:String!){repository(owner:\$owner,name:\$repo){"
   while IFS= read -r number; do
-    query+="pr${number}:pullRequest(number:${number}){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}}} lastComments: comments(last:1){nodes{author{login}}}}}} "
+    query+="pr${number}:pullRequest(number:${number}){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}}} lastComments: comments(last:1){nodes{author{login}}}}} ${files_sel}} "
   done <<<"$numbers"
   query+="}}"
 
   # A failed/rate-limited lookup must not abort the whole command — fall back
-  # to an empty map (every PR renders "-") and keep going.
+  # to empty maps (every PR renders "-") and keep going.
   result=$(gh api graphql -f query="$query" -f owner="$owner" -f repo="$repo_name" 2>/dev/null \
-    | jq --arg me "$me" --argjson prs "$prs" '
+    | jq --arg me "$me" --argjson prs "$prs" --argjson wantViewed "$want_viewed" '
         (reduce $prs[] as $pr ({}; .[$pr.number | tostring] = $pr.author.login)) as $owners
         | .data.repository
         | to_entries
-        | map(select(.value != null) | (.key | ltrimstr("pr")) as $num | {
-            key: $num,
-            value: (
-              ($owners[$num] // "") as $owner
-              | [.value.reviewThreads.nodes[]? | select(.isResolved | not)] as $threads
-              | ($threads | map(select(.comments.nodes[0].author.login == $me))) as $mine
-              | ($threads | map(select(.comments.nodes[0].author.login != $me))) as $theirs
-              | { mine:   { total: ($mine | length),
-                            answered: ([$mine[]   | select(.lastComments.nodes[0].author.login == $owner)] | length) },
-                  theirs: { total: ($theirs | length),
-                            answered: ([$theirs[] | select(.lastComments.nodes[0].author.login == $owner)] | length) } }
-            )
-          })
-        | from_entries
-      ') || result='{}'
-  echo "$result" | jq -e . >/dev/null 2>&1 || result='{}'
-  echo "$result"
-}
-
-# Viewed file stats aren't exposed by `gh pr list`/`pr view --json`, so fetch
-# via GraphQL. Like review threads, this batches every listed PR into a single
-# query and degrades to an empty map if GitHub rejects the lookup.
-#
-# Args: $1 = JSON array of PRs (needs .number).
-# Prints a JSON map: {"<number>": {"viewed": N, "total": M}}.
-fetch_viewed_files() {
-  local prs="$1" owner repo_name numbers number query result
-  owner="${REPO%%/*}"
-  repo_name="${REPO##*/}"
-  numbers=$(jq -r '.[].number' <<<"$prs")
-  [ -n "$numbers" ] || { echo '{}'; return; }
-
-  query="query(\$owner:String!,\$repo:String!){repository(owner:\$owner,name:\$repo){"
-  while IFS= read -r number; do
-    query+="pr${number}:pullRequest(number:${number}){files(first:100){nodes{path viewerViewedState}}} "
-  done <<<"$numbers"
-  query+="}}"
-
-  result=$(gh api graphql -f query="$query" -f owner="$owner" -f repo="$repo_name" 2>/dev/null \
-    | jq '
-        .data.repository
-        | to_entries
-        | map(select(.value != null) | (.key | ltrimstr("pr")) as $num | {
-            key: $num,
-            value: (
-              [.value.files.nodes[]?] as $files
-              | { viewed: ([$files[] | select(.viewerViewedState == "VIEWED")] | length),
-                  total: ($files | length) }
-            )
-          })
-        | from_entries
-      ') || result='{}'
-  echo "$result" | jq -e . >/dev/null 2>&1 || result='{}'
+        | map(select(.value != null) | .num = (.key | ltrimstr("pr")))
+        | { threads: (map({
+              key: .num,
+              value: (
+                ($owners[.num] // "") as $owner
+                | [.value.reviewThreads.nodes[]? | select(.isResolved | not)] as $threads
+                | ($threads | map(select(.comments.nodes[0].author.login == $me))) as $mine
+                | ($threads | map(select(.comments.nodes[0].author.login != $me))) as $theirs
+                | { mine:   { total: ($mine | length),
+                              answered: ([$mine[]   | select(.lastComments.nodes[0].author.login == $owner)] | length) },
+                    theirs: { total: ($theirs | length),
+                              answered: ([$theirs[] | select(.lastComments.nodes[0].author.login == $owner)] | length) } }
+              )
+            }) | from_entries),
+            viewed: (if $wantViewed then (map({
+              key: .num,
+              value: (
+                [.value.files.nodes[]?] as $files
+                | { viewed: ([$files[] | select(.viewerViewedState == "VIEWED")] | length),
+                    total: ($files | length) }
+              )
+            }) | from_entries) else {} end) }
+      ') || result="$empty"
+  echo "$result" | jq -e . >/dev/null 2>&1 || result="$empty"
   echo "$result"
 }

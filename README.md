@@ -132,6 +132,26 @@ gh pr-tools profile show
 gh pr-tools profile remove side
 ```
 
+### Team roster cache (`GH_PR_TOOLS_TEAM_CACHE`)
+
+Team membership drives several columns: the `team N` part of APPROVALS in `todo` / `mine`, the `(team)` markers in `prd`, and the extra `team-review-requested:` searches that let `todo` see PRs where only your team was asked to review. Rosters change rarely, so those lookups are served from `gh`'s local response cache — **1 hour** by default. Everything about the PRs themselves (searches, reviews, threads, viewed files) is always fetched live.
+
+The trade-off: a membership change can take up to the TTL to show up. If you were just added to a team and `todo` isn't listing its PRs, that's the cache.
+
+Set any [Go duration](https://pkg.go.dev/time#ParseDuration) — `30m`, `1h30m`, `300s` — or `0` to skip the cache entirely:
+
+```bash
+GH_PR_TOOLS_TEAM_CACHE=0 gh pr-tools todo     # bypass for one run
+```
+
+To change the default, put it in a profile (`~/.config/gh-pr-tools/profiles/<name>.sh`) next to `REPO` and `ORG`:
+
+```bash
+GH_PR_TOOLS_TEAM_CACHE=24h
+```
+
+An environment value beats the profile. An unparseable value (`60`, `1hour`) is reported on stderr and ignored in favour of `1h`.
+
 ### Jira ↔ PR matching
 
 Jira integration is optional (`JIRA_BASE_URL` blank → no links). When enabled, tickets must appear in the PR so the tools can connect them.

@@ -17,12 +17,10 @@ json=$(gh pr view "$pr" --repo "$REPO" \
   --json number,title,url,author,updatedAt,headRefName,headRefOid,baseRefName,reviewRequests,reviews)
 
 # Requested teams -> {"ui": ["v-hx", ...], "backend": [...]}
-# reviewRequests serializes team slugs as "org/slug"; the API path needs the bare slug.
-members='{}'
-for slug in $(jq -r '[.reviewRequests[]? | .slug // empty | split("/") | last] | unique | .[]' <<<"$json"); do
-  m=$(team_members "$slug")
-  members=$(jq --arg t "$slug" --argjson m "$m" '. + {($t): $m}' <<<"$members")
-done
+# reviewRequests serializes team slugs as "org/slug"; the lookup needs the
+# bare slug. All requested teams are fetched in one aliased call — see
+# teams_members_map.
+members=$(teams_members_map "$(jq -r '[.reviewRequests[]? | .slug // empty | split("/") | last] | unique | .[]' <<<"$json")")
 
 # Union of the current user's team memberships, to mark "Approved by:"
 # entries that are teammates — see my_team_logins in common.sh. Skipped when

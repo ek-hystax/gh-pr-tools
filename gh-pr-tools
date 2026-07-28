@@ -29,6 +29,8 @@ commands:
 
 Profile resolution (for prd/todo/mine/stale-branches): --profile, else match by repo inside a git checkout (must be in git; run init if unmatched).
 Telegram map is shared across profiles.
+Team rosters are cached locally for 1h (affects the APPROVALS team split and todo's team-requested PRs).
+Set GH_PR_TOOLS_TEAM_CACHE to another duration (30m, 1h30m) or 0 to bypass — in the environment, or in a profile.
 EOF
 }
 
