@@ -206,7 +206,7 @@ def approvalsPaint($stats; $approvalThreshold):
 
 # Open review-thread stats, keyed by PR number, as
 # {"mine": {"total": N, "answered": X}, "theirs": {"total": M, "answered": Y}}
-# (see fetch_review_threads in common.sh for how $map is built and what
+# (see fetch_pr_review_state in common.sh for how $map is built and what
 # "answered" means).
 def threadsMineTotal($map): ($map[.number | tostring].mine.total // 0);
 def threadsMineAnswered($map): ($map[.number | tostring].mine.answered // 0);

@@ -51,12 +51,13 @@ for search in "${searches[@]}"; do
   prs=$(printf '%s\n%s' "$prs" "$batch" | jq -s 'add | unique_by(.number)')
 done
 
-# Open review-thread stats aren't exposed by `gh pr list`/`pr view --json`
-# (no reviewThreads field), so fetch per PR via GraphQL — see fetch_review_threads
-# in common.sh. A bit slower than prd if you have a lot of PRs to triage, but
-# negligible for a normal workload.
-threads=$(fetch_review_threads "$prs" "$me")
-viewed=$(fetch_viewed_files "$prs")
+# Open review-thread and viewed-file stats aren't exposed by `gh pr list`/
+# `pr view --json`, so fetch via GraphQL — one batched call for both, see
+# fetch_pr_review_state in common.sh. A bit slower than prd if you have a lot
+# of PRs to triage, but negligible for a normal workload.
+review_state=$(fetch_pr_review_state "$prs" "$me")
+threads=$(jq '.threads' <<<"$review_state")
+viewed=$(jq '.viewed' <<<"$review_state")
 
 # Resolve each requested team to its member logins so todo.jq can tell whether
 # $me is covered by a team request (same map prd.jq uses). reviewRequests

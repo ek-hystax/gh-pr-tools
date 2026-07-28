@@ -32,10 +32,10 @@ fi
 prs=$(gh pr list --repo "$REPO" --search "author:@me is:open -is:draft sort:created-asc" --json "$fields")
 
 # Open review-thread stats aren't exposed by `gh pr list`/`pr view --json`
-# (no reviewThreads field), so fetch per PR via GraphQL — see fetch_review_threads
-# in common.sh. A bit slower than todo/prd if you have a lot of open PRs, but
-# negligible for a normal workload.
-threads=$(fetch_review_threads "$prs" "$me")
+# (no reviewThreads field), so fetch via GraphQL — see fetch_pr_review_state
+# in common.sh (mine only uses the .threads half). A bit slower than todo/prd
+# if you have a lot of open PRs, but negligible for a normal workload.
+threads=$(fetch_pr_review_state "$prs" "$me" | jq '.threads')
 
 # Union of the current user's team memberships, for splitting APPROVALS into
 # total vs. teammate counts — see my_team_logins in common.sh.

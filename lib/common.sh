@@ -234,7 +234,7 @@ my_team_slugs() { # $1: me -> newline-separated team slugs (may be empty)
 
 # Union of member logins across a newline-separated list of team slugs.
 # A failed/rate-limited lookup degrades to "[]" rather than aborting the
-# caller — same fallback policy as fetch_review_threads.
+# caller — same fallback policy as fetch_pr_review_state.
 team_logins_for_slugs() { # $1: newline-separated slugs -> JSON array of logins, deduped
   local result='[]' slug members
   while IFS= read -r slug; do
@@ -322,94 +322,67 @@ fetch_closed_prs_with_branch_status() {
     '{prs: $prs, truncated: $truncated}'
 }
 
-# Open (non-resolved) review-thread stats aren't exposed by `gh pr list`/`pr
-# view --json` (no reviewThreads field), so fetch via GraphQL. Threads are
-# split by who left the *opening* comment (a static fact about the thread,
-# not an activity trace of every reply): $2 ("mine") vs anyone else
-# ("theirs"). Each bucket also tracks how many threads are "answered" — the
-# *last* comment's author is the PR's owner, meaning the owner has since
-# replied (e.g. "Fixed") even though the thread is still open.
+# Open (non-resolved) review-thread stats and viewed-file stats aren't
+# exposed by `gh pr list`/`pr view --json` (no reviewThreads/files fields), so
+# fetch via GraphQL. Both are per-PR lookups, so they share one batched query
+# (one aliased pullRequest field per PR carrying both selections) — a single
+# round trip for the whole PR list instead of two, and instead of one per PR.
 #
-# All PRs are fetched in a single GraphQL call (one aliased pullRequest field
-# per PR) rather than one round trip per PR — with a dozen+ open PRs, N
-# sequential round trips is the dominant cost of the whole command.
+# Threads are split by who left the *opening* comment (a static fact about
+# the thread, not an activity trace of every reply): $2 ("mine") vs anyone
+# else ("theirs"). Each bucket also tracks how many threads are "answered" —
+# the *last* comment's author is the PR's owner, meaning the owner has since
+# replied (e.g. "Fixed") even though the thread is still open.
 #
 # Args: $1 = JSON array of PRs (needs .number and .author.login), $2 = login
 # to attribute as "mine".
-# Prints a JSON map: {"<number>": {"mine": {"total": N, "answered": X},
-#                                  "theirs": {"total": M, "answered": Y}}}.
-fetch_review_threads() {
+# Prints: {threads: {"<number>": {"mine": {"total": N, "answered": X},
+#                                 "theirs": {"total": M, "answered": Y}}},
+#          viewed:  {"<number>": {"viewed": N, "total": M}}}
+fetch_pr_review_state() {
   local prs="$1" me="$2" owner repo_name numbers number query result
+  local empty='{"threads":{},"viewed":{}}'
   owner="${REPO%%/*}"
   repo_name="${REPO##*/}"
   numbers=$(jq -r '.[].number' <<<"$prs")
-  [ -n "$numbers" ] || { echo '{}'; return; }
+  [ -n "$numbers" ] || { echo "$empty"; return; }
 
   query="query(\$owner:String!,\$repo:String!){repository(owner:\$owner,name:\$repo){"
   while IFS= read -r number; do
-    query+="pr${number}:pullRequest(number:${number}){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}}} lastComments: comments(last:1){nodes{author{login}}}}}} "
+    query+="pr${number}:pullRequest(number:${number}){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}}} lastComments: comments(last:1){nodes{author{login}}}}} files(first:100){nodes{path viewerViewedState}}} "
   done <<<"$numbers"
   query+="}}"
 
   # A failed/rate-limited lookup must not abort the whole command — fall back
-  # to an empty map (every PR renders "-") and keep going.
+  # to empty maps (every PR renders "-") and keep going.
   result=$(gh api graphql -f query="$query" -f owner="$owner" -f repo="$repo_name" 2>/dev/null \
     | jq --arg me "$me" --argjson prs "$prs" '
         (reduce $prs[] as $pr ({}; .[$pr.number | tostring] = $pr.author.login)) as $owners
         | .data.repository
         | to_entries
-        | map(select(.value != null) | (.key | ltrimstr("pr")) as $num | {
-            key: $num,
-            value: (
-              ($owners[$num] // "") as $owner
-              | [.value.reviewThreads.nodes[]? | select(.isResolved | not)] as $threads
-              | ($threads | map(select(.comments.nodes[0].author.login == $me))) as $mine
-              | ($threads | map(select(.comments.nodes[0].author.login != $me))) as $theirs
-              | { mine:   { total: ($mine | length),
-                            answered: ([$mine[]   | select(.lastComments.nodes[0].author.login == $owner)] | length) },
-                  theirs: { total: ($theirs | length),
-                            answered: ([$theirs[] | select(.lastComments.nodes[0].author.login == $owner)] | length) } }
-            )
-          })
-        | from_entries
-      ') || result='{}'
-  echo "$result" | jq -e . >/dev/null 2>&1 || result='{}'
-  echo "$result"
-}
-
-# Viewed file stats aren't exposed by `gh pr list`/`pr view --json`, so fetch
-# via GraphQL. Like review threads, this batches every listed PR into a single
-# query and degrades to an empty map if GitHub rejects the lookup.
-#
-# Args: $1 = JSON array of PRs (needs .number).
-# Prints a JSON map: {"<number>": {"viewed": N, "total": M}}.
-fetch_viewed_files() {
-  local prs="$1" owner repo_name numbers number query result
-  owner="${REPO%%/*}"
-  repo_name="${REPO##*/}"
-  numbers=$(jq -r '.[].number' <<<"$prs")
-  [ -n "$numbers" ] || { echo '{}'; return; }
-
-  query="query(\$owner:String!,\$repo:String!){repository(owner:\$owner,name:\$repo){"
-  while IFS= read -r number; do
-    query+="pr${number}:pullRequest(number:${number}){files(first:100){nodes{path viewerViewedState}}} "
-  done <<<"$numbers"
-  query+="}}"
-
-  result=$(gh api graphql -f query="$query" -f owner="$owner" -f repo="$repo_name" 2>/dev/null \
-    | jq '
-        .data.repository
-        | to_entries
-        | map(select(.value != null) | (.key | ltrimstr("pr")) as $num | {
-            key: $num,
-            value: (
-              [.value.files.nodes[]?] as $files
-              | { viewed: ([$files[] | select(.viewerViewedState == "VIEWED")] | length),
-                  total: ($files | length) }
-            )
-          })
-        | from_entries
-      ') || result='{}'
-  echo "$result" | jq -e . >/dev/null 2>&1 || result='{}'
+        | map(select(.value != null) | .num = (.key | ltrimstr("pr")))
+        | { threads: (map({
+              key: .num,
+              value: (
+                ($owners[.num] // "") as $owner
+                | [.value.reviewThreads.nodes[]? | select(.isResolved | not)] as $threads
+                | ($threads | map(select(.comments.nodes[0].author.login == $me))) as $mine
+                | ($threads | map(select(.comments.nodes[0].author.login != $me))) as $theirs
+                | { mine:   { total: ($mine | length),
+                              answered: ([$mine[]   | select(.lastComments.nodes[0].author.login == $owner)] | length) },
+                    theirs: { total: ($theirs | length),
+                              answered: ([$theirs[] | select(.lastComments.nodes[0].author.login == $owner)] | length) } }
+              )
+            }) | from_entries),
+            viewed: (map({
+              key: .num,
+              value: (
+                [.value.files.nodes[]?] as $files
+                | { viewed: ([$files[] | select(.viewerViewedState == "VIEWED")] | length),
+                    total: ($files | length) }
+              )
+            }) | from_entries) }
+      ') || result="$empty"
+  echo "$result" | jq -e . >/dev/null 2>&1 || result="$empty"
   echo "$result"
 }
