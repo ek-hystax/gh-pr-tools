@@ -14,7 +14,6 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-me="${GH_USERNAME:-$(gh api user --jq .login)}"
 ticket_pattern="${JIRA_PREFIX:-[A-Za-z]+}-[0-9]+"
 
 # Fields beyond the default columns (size, CI, merge status, Jira) cost real
@@ -27,6 +26,25 @@ if [ "$long" = true ]; then
   fields="$fields,headRefName,changedFiles,additions,deletions,mergeable,mergeStateStatus,statusCheckRollup"
 fi
 
+# Every fetch below is a network round trip, so independent ones run as
+# background jobs writing into $tmp. `wait <pid>` surfaces each job's exit
+# status, so a failed search still aborts under set -e.
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+# sort:created-asc asks gh/GitHub's search API to return oldest-first, so the
+# final display order (see todo.jq's sort_by(.createdAt)) matches what the API
+# already gave us for any single search — merging multiple team searches still
+# needs that final sort_by to stay correct across the combined set.
+#
+# This primary search filters on server-side @me qualifiers only, so it needs
+# neither the username nor the team lookup below — launch it first and let it
+# overlap with both.
+gh pr list --repo "$REPO" --search "involves:@me is:open -is:draft -author:@me sort:created-asc" --json "$fields" > "$tmp/search-involves" &
+search_pids=($!)
+
+me="${GH_USERNAME:-$(gh api user --jq .login)}"
+
 # involves:@me / review-requested only match *direct* requests — a PR where
 # only a team you belong to was requested (not you by name) is invisible to it.
 # GitHub's team-review-requested:<org>/<team> qualifier catches those, so we run
@@ -37,37 +55,40 @@ fi
 # logins — the slugs drive the extra team-review-requested searches below,
 # and the members feed the APPROVALS teammate split further down.
 my_teams_json=$(my_teams_with_members "$me")
-my_teams=$(jq -r '.slugs[]' <<<"$my_teams_json")
 
-# sort:created-asc asks gh/GitHub's search API to return oldest-first, so the
-# final display order (see todo.jq's sort_by(.createdAt)) matches what the API
-# already gave us for any single search — merging multiple team searches still
-# needs that final sort_by to stay correct across the combined set.
-searches=("involves:@me is:open -is:draft -author:@me sort:created-asc")
+i=0
 while IFS= read -r team; do
   [ -n "$team" ] || continue
-  searches+=("team-review-requested:$ORG/$team is:open -is:draft -author:@me sort:created-asc")
-done <<<"$my_teams"
+  gh pr list --repo "$REPO" --search "team-review-requested:$ORG/$team is:open -is:draft -author:@me sort:created-asc" --json "$fields" > "$tmp/search-team$i" &
+  search_pids+=($!)
+  i=$((i + 1))
+done <<<"$(jq -r '.slugs[]' <<<"$my_teams_json")"
 
-prs='[]'
-for search in "${searches[@]}"; do
-  batch=$(gh pr list --repo "$REPO" --search "$search" --json "$fields")
-  prs=$(printf '%s\n%s' "$prs" "$batch" | jq -s 'add | unique_by(.number)')
-done
+for pid in "${search_pids[@]}"; do wait "$pid"; done
+prs=$(cat "$tmp"/search-* | jq -s 'add | unique_by(.number)')
 
 # Open review-thread and viewed-file stats aren't exposed by `gh pr list`/
 # `pr view --json`, so fetch via GraphQL — one batched call for both, see
 # fetch_pr_review_state in common.sh. A bit slower than prd if you have a lot
 # of PRs to triage, but negligible for a normal workload.
-review_state=$(fetch_pr_review_state "$prs" "$me")
-threads=$(jq '.threads' <<<"$review_state")
-viewed=$(jq '.viewed' <<<"$review_state")
+#
+# Both this and the requested-team member lookup below only need $prs, so
+# they run concurrently.
+fetch_pr_review_state "$prs" "$me" > "$tmp/review-state" &
+review_pid=$!
 
 # Resolve each requested team to its member logins so todo.jq can tell whether
 # $me is covered by a team request (same map prd.jq uses). reviewRequests
 # serializes team slugs as "org/slug"; the lookup needs the bare slug. All
 # requested teams are fetched in one aliased call — see teams_members_map.
-members=$(teams_members_map "$(jq -r '[.[].reviewRequests[]? | .slug // empty | split("/") | last] | unique | .[]' <<<"$prs")")
+teams_members_map "$(jq -r '[.[].reviewRequests[]? | .slug // empty | split("/") | last] | unique | .[]' <<<"$prs")" > "$tmp/members" &
+members_pid=$!
+
+wait "$review_pid"
+threads=$(jq '.threads' "$tmp/review-state")
+viewed=$(jq '.viewed' "$tmp/review-state")
+wait "$members_pid"
+members=$(cat "$tmp/members")
 
 # Union of the current user's team memberships, for splitting APPROVALS into
 # total vs. teammate counts. Reuses $my_teams_json (already fetched above)

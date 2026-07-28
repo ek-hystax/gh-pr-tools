@@ -14,7 +14,6 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-me="${GH_USERNAME:-$(gh api user --jq .login)}"
 ticket_pattern="${JIRA_PREFIX:-[A-Za-z]+}-[0-9]+"
 
 # Fields beyond the default columns (size, merge status) cost real time: each
@@ -27,19 +26,33 @@ if [ "$long" = true ]; then
   fields="$fields,changedFiles,additions,deletions,mergeable,mergeStateStatus"
 fi
 
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
 # sort:created-asc asks gh/GitHub's search API to return oldest-first, matching
 # mine.jq's sort_by(.createdAt) so the stalest PRs surface first.
-prs=$(gh pr list --repo "$REPO" --search "author:@me is:open -is:draft sort:created-asc" --json "$fields")
+#
+# The search filters on the server-side @me qualifier only, so it needs
+# neither the username nor the team lookup below — run it in the background
+# and let it overlap with both. `wait` surfaces its exit status, so a failed
+# search still aborts under set -e.
+gh pr list --repo "$REPO" --search "author:@me is:open -is:draft sort:created-asc" --json "$fields" > "$tmp/prs" &
+search_pid=$!
+
+me="${GH_USERNAME:-$(gh api user --jq .login)}"
+
+# Union of the current user's team memberships, for splitting APPROVALS into
+# total vs. teammate counts — see my_team_logins in common.sh.
+my_logins=$(my_team_logins "$me")
+
+wait "$search_pid"
+prs=$(cat "$tmp/prs")
 
 # Open review-thread stats aren't exposed by `gh pr list`/`pr view --json`
 # (no reviewThreads field), so fetch via GraphQL — see fetch_pr_review_state
 # in common.sh (mine only uses the .threads half). A bit slower than todo/prd
 # if you have a lot of open PRs, but negligible for a normal workload.
 threads=$(fetch_pr_review_state "$prs" "$me" | jq '.threads')
-
-# Union of the current user's team memberships, for splitting APPROVALS into
-# total vs. teammate counts — see my_team_logins in common.sh.
-my_logins=$(my_team_logins "$me")
 
 jq -rn -L "$dir" \
   --argjson threads "$threads" \
