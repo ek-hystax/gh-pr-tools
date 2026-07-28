@@ -208,7 +208,7 @@ resolve_pr() {
 }
 
 load_config() {
-  local name path
+  local name path env_cache="${GH_PR_TOOLS_TEAM_CACHE:-}"
   name=$(resolve_profile)
   path=$(profile_path "$name")
   # shellcheck source=/dev/null
@@ -219,15 +219,39 @@ load_config() {
   # A hand-edited or pre-existing profile could set this to 0 or something
   # non-numeric; init.sh only validates its own prompt, not the file directly.
   [[ "$APPROVAL_THRESHOLD" =~ ^[0-9]+$ ]] && [ "$APPROVAL_THRESHOLD" -ge 1 ] || APPROVAL_THRESHOLD=1
+  # Resolved here rather than when this file is sourced, so a profile can set
+  # GH_PR_TOOLS_TEAM_CACHE like every other setting; an environment value
+  # still wins, since that's the documented per-invocation override.
+  team_cache_ttl="${env_cache:-${GH_PR_TOOLS_TEAM_CACHE:-$team_cache_default}}"
+  if ! valid_gh_duration "$team_cache_ttl"; then
+    echo "gh pr-tools: ignoring invalid GH_PR_TOOLS_TEAM_CACHE '$team_cache_ttl'" \
+         "(expected a duration like 30m, 1h30m, or 0) — using $team_cache_default" >&2
+    team_cache_ttl="$team_cache_default"
+  fi
 }
 
 # Team rosters change rarely, so every team lookup below is served from gh's
 # local response cache (gh api --cache) for up to this long — warm runs skip
 # those round trips and their API quota. The trade-off: a roster change can
-# take up to the TTL to show up in the APPROVALS/team columns. Override per
-# invocation with GH_PR_TOOLS_TEAM_CACHE (any gh duration; 0s bypasses).
+# take up to the TTL to show up in the APPROVALS/team columns. Override with
+# GH_PR_TOOLS_TEAM_CACHE, in the environment or in a profile (any gh
+# duration; 0 bypasses the cache).
 # PR data (searches, reviews, threads) is never cached — it must stay live.
-team_cache_ttl="${GH_PR_TOOLS_TEAM_CACHE:-1h}"
+team_cache_default=1h
+# Fallback for the few code paths that use a team lookup without load_config;
+# load_config overwrites this with the validated profile/environment value.
+team_cache_ttl="$team_cache_default"
+
+# gh's --cache takes a Go duration: one or more <number><unit> pairs, or a
+# bare 0. gh rejects anything else *before* making the request, which the
+# lookups below either report as a hard failure (teams_members_map) or
+# silently degrade into "you're on no teams" (my_teams_with_members) — so
+# catch a bad value once, up front, instead of letting it look like an empty
+# roster.
+valid_gh_duration() {
+  [ "$1" = "0" ] && return 0
+  [[ "$1" =~ ^([0-9]+(\.[0-9]+)?(ns|us|ms|s|m|h))+$ ]]
+}
 
 team_members() { # $1: team slug -> JSON array of logins
   gh api "orgs/$ORG/teams/$1/members" --paginate --cache "$team_cache_ttl" \
