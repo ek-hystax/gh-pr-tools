@@ -411,13 +411,22 @@ fetch_closed_prs_with_branch_status() {
 # replied (e.g. "Fixed") even though the thread is still open.
 #
 # Args: $1 = JSON array of PRs (needs .number and .author.login), $2 = login
-# to attribute as "mine".
+# to attribute as "mine", $3 = "threads" to skip the viewed-file half (the
+# fallback below is all-or-nothing, so a caller with no VIEWED column
+# shouldn't pay for that selection — or risk losing its thread stats to an
+# error in data it never renders). Default: both.
 # Prints: {threads: {"<number>": {"mine": {"total": N, "answered": X},
 #                                 "theirs": {"total": M, "answered": Y}}},
 #          viewed:  {"<number>": {"viewed": N, "total": M}}}
+# With $3 = "threads", .viewed is an empty map.
 fetch_pr_review_state() {
-  local prs="$1" me="$2" owner repo_name numbers number query result
-  local empty='{"threads":{},"viewed":{}}'
+  local prs="$1" me="$2" want="${3:-all}" owner repo_name numbers number query result
+  local empty='{"threads":{},"viewed":{}}' files_sel="" want_viewed=true
+  if [ "$want" = "threads" ]; then
+    want_viewed=false
+  else
+    files_sel="files(first:100){nodes{path viewerViewedState}}"
+  fi
   owner="${REPO%%/*}"
   repo_name="${REPO##*/}"
   numbers=$(jq -r '.[].number' <<<"$prs")
@@ -425,14 +434,14 @@ fetch_pr_review_state() {
 
   query="query(\$owner:String!,\$repo:String!){repository(owner:\$owner,name:\$repo){"
   while IFS= read -r number; do
-    query+="pr${number}:pullRequest(number:${number}){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}}} lastComments: comments(last:1){nodes{author{login}}}}} files(first:100){nodes{path viewerViewedState}}} "
+    query+="pr${number}:pullRequest(number:${number}){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}}} lastComments: comments(last:1){nodes{author{login}}}}} ${files_sel}} "
   done <<<"$numbers"
   query+="}}"
 
   # A failed/rate-limited lookup must not abort the whole command — fall back
   # to empty maps (every PR renders "-") and keep going.
   result=$(gh api graphql -f query="$query" -f owner="$owner" -f repo="$repo_name" 2>/dev/null \
-    | jq --arg me "$me" --argjson prs "$prs" '
+    | jq --arg me "$me" --argjson prs "$prs" --argjson wantViewed "$want_viewed" '
         (reduce $prs[] as $pr ({}; .[$pr.number | tostring] = $pr.author.login)) as $owners
         | .data.repository
         | to_entries
@@ -450,14 +459,14 @@ fetch_pr_review_state() {
                               answered: ([$theirs[] | select(.lastComments.nodes[0].author.login == $owner)] | length) } }
               )
             }) | from_entries),
-            viewed: (map({
+            viewed: (if $wantViewed then (map({
               key: .num,
               value: (
                 [.value.files.nodes[]?] as $files
                 | { viewed: ([$files[] | select(.viewerViewedState == "VIEWED")] | length),
                     total: ($files | length) }
               )
-            }) | from_entries) }
+            }) | from_entries) else {} end) }
       ') || result="$empty"
   echo "$result" | jq -e . >/dev/null 2>&1 || result="$empty"
   echo "$result"

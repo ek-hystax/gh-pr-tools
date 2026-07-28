@@ -50,9 +50,12 @@ prs=$(cat "$tmp/prs")
 
 # Open review-thread stats aren't exposed by `gh pr list`/`pr view --json`
 # (no reviewThreads field), so fetch via GraphQL — see fetch_pr_review_state
-# in common.sh (mine only uses the .threads half). A bit slower than todo/prd
-# if you have a lot of open PRs, but negligible for a normal workload.
-threads=$(fetch_pr_review_state "$prs" "$me" | jq '.threads')
+# in common.sh. mine has no VIEWED column, so ask for the threads half only:
+# the viewed-file selection would be fetched and discarded, and since the
+# lookup degrades all-or-nothing, an error in it would blank THREADS too.
+# A bit slower than todo/prd if you have a lot of open PRs, but negligible
+# for a normal workload.
+threads=$(fetch_pr_review_state "$prs" "$me" threads | jq '.threads')
 
 jq -rn -L "$dir" \
   --argjson threads "$threads" \
