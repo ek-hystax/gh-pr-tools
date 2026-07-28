@@ -376,3 +376,40 @@ fetch_review_threads() {
   echo "$result" | jq -e . >/dev/null 2>&1 || result='{}'
   echo "$result"
 }
+
+# Viewed file stats aren't exposed by `gh pr list`/`pr view --json`, so fetch
+# via GraphQL. Like review threads, this batches every listed PR into a single
+# query and degrades to an empty map if GitHub rejects the lookup.
+#
+# Args: $1 = JSON array of PRs (needs .number).
+# Prints a JSON map: {"<number>": {"viewed": N, "total": M}}.
+fetch_viewed_files() {
+  local prs="$1" owner repo_name numbers number query result
+  owner="${REPO%%/*}"
+  repo_name="${REPO##*/}"
+  numbers=$(jq -r '.[].number' <<<"$prs")
+  [ -n "$numbers" ] || { echo '{}'; return; }
+
+  query="query(\$owner:String!,\$repo:String!){repository(owner:\$owner,name:\$repo){"
+  while IFS= read -r number; do
+    query+="pr${number}:pullRequest(number:${number}){files(first:100){nodes{path viewerViewedState}}} "
+  done <<<"$numbers"
+  query+="}}"
+
+  result=$(gh api graphql -f query="$query" -f owner="$owner" -f repo="$repo_name" 2>/dev/null \
+    | jq '
+        .data.repository
+        | to_entries
+        | map(select(.value != null) | (.key | ltrimstr("pr")) as $num | {
+            key: $num,
+            value: (
+              [.value.files.nodes[]?] as $files
+              | { viewed: ([$files[] | select(.viewerViewedState == "VIEWED")] | length),
+                  total: ($files | length) }
+            )
+          })
+        | from_entries
+      ') || result='{}'
+  echo "$result" | jq -e . >/dev/null 2>&1 || result='{}'
+  echo "$result"
+}

@@ -1,6 +1,6 @@
 include "common";
 
-# Inputs supplied by todo.sh: $me, $threads, $teamMembers, $teamLogins,
+# Inputs supplied by todo.sh: $me, $threads, $viewed, $teamMembers, $teamLogins,
 # $approvalThreshold, $jiraBase, $jiraPattern, $long
 
 def yn($b): if $b then "yes" else "-" end;
@@ -82,6 +82,22 @@ def threadsPaint:
       + (")" | dim)
     end;
 
+def viewedCell:
+  ($viewed[.number | tostring] // null) as $v
+  | if $v == null then "-"
+    else "\($v.viewed // 0)/\($v.total // 0)"
+    end;
+
+def viewedPaint:
+  ($viewed[.number | tostring] // null) as $v
+  | if $v == null then ("-" | dim)
+    elif ($v.viewed // 0) == ($v.total // 0) then viewedCell | green
+    else
+      ("\($v.viewed // 0)" | dim)
+      + ("/" | dim)
+      + ("\($v.total // 0)" | yellow)
+    end;
+
 def merge:
   if .mergeable == "CONFLICTING" then "conflict"
   else (.mergeStateStatus // "-" | ascii_downcase)
@@ -112,6 +128,7 @@ def cells:
     APPROVALS:  approvalsCell(._approvalStats; $approvalThreshold),
     MINE:       mineState,
     THREADS:    threadsCell(threadsMineTotal($threads); threadsMineAnswered($threads)),
+    VIEWED:     viewedCell,
     WAITING:    isoRel(waitingSince),
     UPDATED:    isoRel(.updatedAt),
     AGE:        isoRel(.createdAt),
@@ -126,11 +143,11 @@ def cells:
 def headers:
   {
     PR: "PR", TITLE: "TITLE", AUTHOR: "AUTHOR", STATUS: "STATUS", APPROVALS: "APPROVALS", MINE: "MINE",
-    THREADS: "THREADS", WAITING: "PENDING SINCE", UPDATED: "UPDATED", AGE: "AGE", RE_REVIEW: "NEW CHANGES",
+    THREADS: "THREADS", VIEWED: "VIEWED", WAITING: "PENDING SINCE", UPDATED: "UPDATED", AGE: "AGE", RE_REVIEW: "NEW CHANGES",
     SIZE: "SIZE", CI: "CI", MERGE: "MERGE", URL: "URL", JIRA: "JIRA"
   };
 
-# SIZE, THREADS, WAITING need the raw PR object, not cell text, so the
+# SIZE, THREADS, VIEWED, WAITING need the raw PR object, not cell text, so the
 # render loop special-cases them instead of routing through paint($col).
 def paint($col):
   if   $col == "PR" then green
@@ -143,10 +160,10 @@ def paint($col):
   elif $col == "UPDATED" or $col == "AGE" or $col == "URL" or $col == "JIRA" then dim
   else . end;
 
-# THREADS sits right after MINE in both column sets, rather than at the end.
+# THREADS and VIEWED sit right after MINE in both column sets, rather than at the end.
 def cols:
-  if $long then ["PR", "TITLE", "AUTHOR", "STATUS", "MINE", "APPROVALS", "THREADS", "RE_REVIEW", "WAITING", "UPDATED", "CI", "URL", "JIRA", "AGE", "SIZE", "MERGE"]
-  else ["PR", "TITLE", "AUTHOR", "STATUS", "MINE", "APPROVALS", "THREADS", "RE_REVIEW", "WAITING", "URL"]
+  if $long then ["PR", "TITLE", "AUTHOR", "STATUS", "MINE", "APPROVALS", "THREADS", "VIEWED", "RE_REVIEW", "WAITING", "UPDATED", "CI", "URL", "JIRA", "AGE", "SIZE", "MERGE"]
+  else ["PR", "TITLE", "AUTHOR", "STATUS", "MINE", "APPROVALS", "THREADS", "VIEWED", "RE_REVIEW", "WAITING", "URL"]
   end;
 
 # Main
@@ -166,6 +183,8 @@ def cols:
           ($pr | sizePaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "THREADS" then
           ($pr | threadsPaint) + (" " * ($w[$i] - ($c[$i] | length)))
+        elif $cols[$i] == "VIEWED" then
+          ($pr | viewedPaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "WAITING" then
           ($pr | waitingPaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "APPROVALS" then

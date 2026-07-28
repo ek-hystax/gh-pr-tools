@@ -3,7 +3,7 @@
 A [gh](https://cli.github.com/) extension for PR review triage.
 
 - `prd` — who has approved a PR, and who still needs to
-- `todo` — open PRs you're a reviewer on (whether or not you've already approved), including open threads you started and whether the author's answered
+- `todo` — open PRs you're a reviewer on (whether or not you've already approved), including open threads you started, whether the author's answered, and viewed-file progress
 - `mine` — your own open PRs: review status, approvals, open threads reviewers started and whether you've answered, CI
 - `stale-branches` — closed PRs whose head branch is still around (yours by default; `--author`/`--all` for others)
 - `notify` — poll CI until it finishes (macOS desktop notification when done)
@@ -181,9 +181,11 @@ gh pr-tools -p work prd 886
 gh pr-tools todo [--long]
 ```
 
-Lists open PRs where you're an actual reviewer — currently requested, or you've left any review, including ones you've already approved. By default shows a compact table (PR, title, author, status, your review state, approvals, open threads, whether new changes landed since your review, how long it's been in its current state, URL); pass `--long` for all columns, adding last-updated, age, size, CI, merge status, and Jira link.
+Lists open PRs where you're an actual reviewer — currently requested, or you've left any review, including ones you've already approved. By default shows a compact table (PR, title, author, status, your review state, approvals, open threads, viewed-file progress, whether new changes landed since your review, how long it's been in its current state, URL); pass `--long` for all columns, adding last-updated, age, size, CI, merge status, and Jira link.
 
 The `THREADS` column only counts review threads *you* opened that are still open (unresolved) — a thread is attributed to whoever left its opening comment, not every participant. It shows `N (A answered)`: `N` is how many of your threads are still open, `A` is how many the PR author has since replied to (e.g. "Fixed") even though the thread is still open — those are the ones worth going back to re-check, so the answered count is highlighted when non-zero. Shows `-` when you have nothing open.
+
+`VIEWED` shows `N/T`: how many files GitHub says the current viewer marked as viewed out of the first 100 PR files returned by GraphQL. Shows `-` if the viewed-file lookup fails.
 
 `STATUS` and `APPROVALS` use the same threshold-based logic as `mine` (see below) rather than GitHub's `reviewDecision`: "Approved" once distinct approvals meet your profile's approval threshold, "Approved (stale)" if the threshold is only met by counting approvers whose approval is against an older commit, otherwise "Awaiting Approval" — this column doesn't distinguish an outright changes-requested review from one nobody has looked at yet. `APPROVALS` shows `total (team)` — total distinct approvers, and in parens how many are members of a team you belong to.
 

@@ -56,6 +56,7 @@ done
 # in common.sh. A bit slower than prd if you have a lot of PRs to triage, but
 # negligible for a normal workload.
 threads=$(fetch_review_threads "$prs" "$me")
+viewed=$(fetch_viewed_files "$prs")
 
 # Resolve each requested team to its member logins so todo.jq can tell whether
 # $me is covered by a team request (same map prd.jq uses). reviewRequests
@@ -74,6 +75,7 @@ my_logins=$(team_logins_for_slugs "$my_teams")
 jq -rn -L "$dir" \
   --arg me "$me" \
   --argjson threads "$threads" \
+  --argjson viewed "$viewed" \
   --argjson teamMembers "$members" \
   --argjson teamLogins "$my_logins" \
   --argjson approvalThreshold "${APPROVAL_THRESHOLD:-1}" \
