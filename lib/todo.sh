@@ -27,21 +27,48 @@ if [ "$long" = true ]; then
 fi
 
 # Every fetch below is a network round trip, so independent ones run as
-# background jobs writing into $tmp. `wait <pid>` surfaces each job's exit
-# status, so a failed search still aborts under set -e.
+# background jobs writing into $tmp.
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
+# GitHub's search API allows 30 requests/minute and applies secondary rate
+# limits to bursts of concurrent requests, so the searches below fan out at
+# most $max_parallel at a time instead of all at once — nearly all of the
+# speedup, without a burst that 403s (and, through `wait`, kills the whole
+# command) for anyone who is on a lot of teams.
+max_parallel=4
+search_pids=()
+search_count=0
+
+# `wait <pid>` surfaces each job's exit status, so a failed search still
+# aborts under set -e.
+drain_searches() {
+  local pid
+  [ "${#search_pids[@]}" -gt 0 ] || return 0
+  for pid in "${search_pids[@]}"; do wait "$pid"; done
+  search_pids=()
+}
+
+# $1: search qualifiers, minus the suffix every search shares.
 # sort:created-asc asks gh/GitHub's search API to return oldest-first, so the
 # final display order (see todo.jq's sort_by(.createdAt)) matches what the API
 # already gave us for any single search — merging multiple team searches still
-# needs that final sort_by to stay correct across the combined set.
-#
+# needs that final sort_by to stay correct across the combined set. The
+# zero-padded filename keeps the $tmp/search-* glob in launch order past ten
+# teams (immaterial to the deduped result, but it keeps `cat` predictable).
+start_search() {
+  gh pr list --repo "$REPO" \
+    --search "$1 is:open -is:draft -author:@me sort:created-asc" \
+    --json "$fields" > "$(printf '%s/search-%03d' "$tmp" "$search_count")" &
+  search_pids+=($!)
+  search_count=$((search_count + 1))
+  [ "${#search_pids[@]}" -lt "$max_parallel" ] || drain_searches
+}
+
 # This primary search filters on server-side @me qualifiers only, so it needs
 # neither the username nor the team lookup below — launch it first and let it
 # overlap with both.
-gh pr list --repo "$REPO" --search "involves:@me is:open -is:draft -author:@me sort:created-asc" --json "$fields" > "$tmp/search-involves" &
-search_pids=($!)
+start_search "involves:@me"
 
 me="${GH_USERNAME:-$(gh api user --jq .login)}"
 
@@ -56,15 +83,12 @@ me="${GH_USERNAME:-$(gh api user --jq .login)}"
 # and the members feed the APPROVALS teammate split further down.
 my_teams_json=$(my_teams_with_members "$me")
 
-i=0
 while IFS= read -r team; do
   [ -n "$team" ] || continue
-  gh pr list --repo "$REPO" --search "team-review-requested:$ORG/$team is:open -is:draft -author:@me sort:created-asc" --json "$fields" > "$tmp/search-team$i" &
-  search_pids+=($!)
-  i=$((i + 1))
+  start_search "team-review-requested:$ORG/$team"
 done <<<"$(jq -r '.slugs[]' <<<"$my_teams_json")"
 
-for pid in "${search_pids[@]}"; do wait "$pid"; done
+drain_searches
 prs=$(cat "$tmp"/search-* | jq -s 'add | unique_by(.number)')
 
 # Open review-thread and viewed-file stats aren't exposed by `gh pr list`/
