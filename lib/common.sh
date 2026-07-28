@@ -221,8 +221,16 @@ load_config() {
   [[ "$APPROVAL_THRESHOLD" =~ ^[0-9]+$ ]] && [ "$APPROVAL_THRESHOLD" -ge 1 ] || APPROVAL_THRESHOLD=1
 }
 
+# Team rosters change rarely, so every team lookup below is served from gh's
+# local response cache (gh api --cache) for up to this long — warm runs skip
+# those round trips and their API quota. The trade-off: a roster change can
+# take up to the TTL to show up in the APPROVALS/team columns. Override per
+# invocation with GH_PR_TOOLS_TEAM_CACHE (any gh duration; 0s bypasses).
+# PR data (searches, reviews, threads) is never cached — it must stay live.
+team_cache_ttl="${GH_PR_TOOLS_TEAM_CACHE:-1h}"
+
 team_members() { # $1: team slug -> JSON array of logins
-  gh api "orgs/$ORG/teams/$1/members" --paginate \
+  gh api "orgs/$ORG/teams/$1/members" --paginate --cache "$team_cache_ttl" \
     | jq -s '[.[].[] | .login]'
 }
 
@@ -238,7 +246,7 @@ team_members() { # $1: team slug -> JSON array of logins
 # Prints: {slugs: ["<slug>", ...], members: {"<slug>": ["login", ...]}}
 my_teams_with_members() {
   local me="$1" empty='{"slugs":[],"members":{}}' result slug m
-  result=$(gh api graphql \
+  result=$(gh api graphql --cache "$team_cache_ttl" \
     -f query='query($org:String!,$me:String!){organization(login:$org){teams(first:100,userLogins:[$me]){nodes{slug members(first:100){pageInfo{hasNextPage} nodes{login}}}}}}' \
     -f org="$ORG" -f me="$me" 2>/dev/null \
     | jq '{slugs: [.data.organization.teams.nodes[].slug],
@@ -276,7 +284,7 @@ teams_members_map() {
   done <<<"$slugs"
   [ "$i" -gt 0 ] || { echo '{}'; return; }
   query="query(\$org:String!){organization(login:\$org){${fields}}}"
-  result=$(gh api graphql -f query="$query" -f org="$ORG" \
+  result=$(gh api graphql --cache "$team_cache_ttl" -f query="$query" -f org="$ORG" \
     | jq '[.data.organization | to_entries[] | .value | select(. != null)
            | {key: .slug,
               value: {logins: [.members.nodes[].login],
