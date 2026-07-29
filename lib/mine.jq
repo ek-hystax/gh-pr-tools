@@ -16,19 +16,11 @@ def sizePaint:
   + " +\(.additions // 0 | tostring | green)"
   + "/\("-" + (.deletions // 0 | tostring) | red)";
 
-# Only threads reviewers opened (theirs bucket) — the ones waiting on me. The
-# unanswered portion (total minus answered) is what still needs my reply, so
-# that's what's worth highlighting; once everything's answered, the whole
-# thing is just waiting on the reviewer next.
-def threadsPaint:
-  threadsTheirsTotal($threads) as $t | threadsTheirsAnswered($threads) as $a
-  | ($t - $a) as $pending
-  | if $t == 0 then ("-" | dim)
-    else
-      ("\($t)" | cyan) + (" (" | dim)
-      + ("\($a) answered" | if $pending > 0 then yellow else dim end)
-      + (")" | dim)
-    end;
+# Only threads reviewers opened (theirs bucket) — the ones waiting on me.
+# "Pending" is what still needs my reply, so that's the state worth
+# highlighting; "answered" (I've replied) is waiting on the reviewer next, and
+# "resolved" is settled.
+def threadsColors: {pending: "yellow", answered: "dim", resolved: "green"};
 
 def merge:
   if .mergeable == "CONFLICTING" then "conflict"
@@ -49,7 +41,7 @@ def cells:
     PR:         "#\(.number)",
     TITLE:      .title[0:80],
     STATUS:     approvalDecision(._approvalStats; $approvalThreshold),
-    THREADS:    threadsCell(threadsTheirsTotal($threads); threadsTheirsAnswered($threads)),
+    THREADS:    threadsCell(threadsTheirs($threads)),
     APPROVALS:  approvalsCell(._approvalStats; $approvalThreshold),
     CI:         ci,
     URL:        .url,
@@ -98,7 +90,7 @@ def cols:
       | if $cols[$i] == "SIZE" then
           ($pr | sizePaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "THREADS" then
-          ($pr | threadsPaint) + (" " * ($w[$i] - ($c[$i] | length)))
+          ($pr | threadsPaint(threadsTheirs($threads); threadsColors)) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "WAITING" then
           ($pr | waitingPaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "APPROVALS" then

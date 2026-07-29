@@ -3,8 +3,8 @@
 A [gh](https://cli.github.com/) extension for PR review triage.
 
 - `prd` — who has approved a PR, and who still needs to
-- `todo` — open PRs you're a reviewer on (whether or not you've already approved), including open threads you started, whether the author's answered, and viewed-file progress
-- `mine` — your own open PRs: review status, approvals, open threads reviewers started and whether you've answered, CI
+- `todo` — open PRs you're a reviewer on (whether or not you've already approved), including the threads you started split by pending / answered / resolved, and viewed-file progress
+- `mine` — your own open PRs: review status, approvals, threads reviewers started split by pending / answered / resolved, CI
 - `stale-branches` — closed PRs whose head branch is still around (yours by default; `--author`/`--all` for others)
 - `notify` — poll CI until it finishes (macOS desktop notification when done)
 
@@ -81,7 +81,7 @@ Open PRs you're a reviewer on:
 gh pr-tools todo
 ```
 
-Your own open PRs — review status, approvals, open threads, CI:
+Your own open PRs — review status, approvals, review threads, CI:
 
 ```bash
 gh pr-tools mine
@@ -201,9 +201,15 @@ gh pr-tools -p work prd 886
 gh pr-tools todo [--long]
 ```
 
-Lists open PRs where you're an actual reviewer — currently requested, or you've left any review, including ones you've already approved. By default shows a compact table (PR, title, author, status, your review state, approvals, open threads, viewed-file progress, whether new changes landed since your review, how long it's been in its current state, URL); pass `--long` for all columns, adding last-updated, age, size, CI, merge status, and Jira link.
+Lists open PRs where you're an actual reviewer — currently requested, or you've left any review, including ones you've already approved. By default shows a compact table (PR, title, author, status, your review state, approvals, review threads, viewed-file progress, whether new changes landed since your review, how long it's been in its current state, URL); pass `--long` for all columns, adding last-updated, age, size, CI, merge status, and Jira link.
 
-The `THREADS` column only counts review threads *you* opened that are still open (unresolved) — a thread is attributed to whoever left its opening comment, not every participant. It shows `N (A answered)`: `N` is how many of your threads are still open, `A` is how many the PR author has since replied to (e.g. "Fixed") even though the thread is still open — those are the ones worth going back to re-check, so the answered count is highlighted when non-zero. Shows `-` when you have nothing open.
+The `THREADS` column counts review threads *you* opened — a thread is attributed to whoever left its opening comment, not every participant. It shows `N (P pending, A answered, R resolved)`, where `N` is every thread you started on the PR and the three states are disjoint and sum to `N`:
+
+- **pending** — still open with no reply from the PR author yet; the ball is in their court.
+- **answered** — still open, but the author's reply is the latest comment (e.g. "Fixed"). These are the ones worth going back to re-check, so this is the count that's highlighted.
+- **resolved** — marked resolved on GitHub; settled, shown in green.
+
+States with a count of zero are left out, so a fully settled PR reads `4 (4 resolved)` and a brand-new one reads `2 (2 pending)`. Shows `-` only when you opened no threads at all (or when the lookup fails).
 
 `VIEWED` shows `N/T`: how many files GitHub says the current viewer marked as viewed out of the first 100 PR files returned by GraphQL. Shows `-` if the viewed-file lookup fails.
 
@@ -219,11 +225,17 @@ The `PENDING SINCE` column is color-graded by how long the PR has been in its cu
 gh pr-tools mine [--long]
 ```
 
-Lists your own open, non-draft PRs with the columns you need to triage them: review status (Approved / Approved (stale) / Awaiting Approval), open review threads, how long it's been pending (`PENDING SINCE`, same color grading as `todo`), number of approvals, CI status, PR URL, and Jira link (same branch-name convention as `todo`). Pass `--long` to add age, size, and merge status.
+Lists your own open, non-draft PRs with the columns you need to triage them: review status (Approved / Approved (stale) / Awaiting Approval), review threads, how long it's been pending (`PENDING SINCE`, same color grading as `todo`), number of approvals, CI status, PR URL, and Jira link (same branch-name convention as `todo`). Pass `--long` to add age, size, and merge status.
 
 `STATUS` is driven by your profile's approval threshold, not GitHub's `reviewDecision` field: it's "Approved" once distinct approvals meet your threshold, "Approved (stale)" if the threshold is only met by counting approvers whose approval is against an older commit, otherwise "Awaiting Approval" — this column doesn't distinguish an outright changes-requested review from one nobody has looked at yet. `APPROVALS` shows `total (team)` — total distinct approvers, and in parens how many of those are members of a team you belong to — colored green once the total meets your threshold. Set your threshold via `gh pr-tools init` or check it with `gh pr-tools profile show`.
 
-The `THREADS` column only counts review threads *reviewers* opened that are still open (unresolved) — a thread is attributed to whoever left its opening comment, not every participant. It shows `N (A answered)`: `N` is how many are still open, `A` is how many you've already replied to (those are now waiting on the reviewer next). The `A answered` count is highlighted when some threads remain unanswered; those unanswered threads are the ones still needing your reply. Shows `-` when there's nothing open.
+The `THREADS` column counts review threads *reviewers* opened — a thread is attributed to whoever left its opening comment, not every participant. It shows `N (P pending, A answered, R resolved)`, where `N` is every thread reviewers started on the PR and the three states are disjoint and sum to `N`:
+
+- **pending** — still open and still waiting on your reply. This is the count that's highlighted, since it's the work left for you.
+- **answered** — still open, but your reply is the latest comment, so it's waiting on the reviewer next.
+- **resolved** — marked resolved on GitHub; settled, shown in green.
+
+States with a count of zero are left out, so a PR you've fully worked through reads `4 (4 resolved)` and one you haven't touched yet reads `2 (2 pending)`. Shows `-` only when no reviewer has opened a thread (or when the lookup fails).
 
 ```bash
 gh pr-tools mine
@@ -231,7 +243,7 @@ gh pr-tools mine --long
 gh pr-tools -p work mine
 ```
 
-Open review-thread stats aren't exposed by GitHub's `--json` convenience fields, so both `mine` and `todo` make one extra GraphQL call to fetch them — a single batched request covering every listed PR at once, not one call per PR, so it stays fast regardless of how many PRs you have open.
+Review-thread stats aren't exposed by GitHub's `--json` convenience fields, so both `mine` and `todo` make one extra GraphQL call to fetch them — a single batched request covering every listed PR at once, not one call per PR, so it stays fast regardless of how many PRs you have open. That request takes the first 100 threads per PR, resolved ones included, so a PR with a very long resolved history can undercount.
 
 Both commands also only request the PR fields their current column set needs — size, CI, merge status, age, and Jira link all cost an extra per-PR lookup under the hood, so `--long` fetches noticeably more data than the default view.
 

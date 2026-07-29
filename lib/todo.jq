@@ -70,17 +70,10 @@ def sizePaint:
   + "/\("-" + (.deletions // 0 | tostring) | red)";
 
 # Only threads I opened (mine bucket) — the ones I'm waiting on the owner
-# for. "Answered" (owner replied) is what needs my attention next, since the
-# thread is still open despite the reply, so it's the count worth
-# highlighting.
-def threadsPaint:
-  threadsMineTotal($threads) as $t | threadsMineAnswered($threads) as $a
-  | if $t == 0 then ("-" | dim)
-    else
-      ("\($t)" | cyan) + (" (" | dim)
-      + ("\($a) answered" | if $a > 0 then yellow else dim end)
-      + (")" | dim)
-    end;
+# for. "Answered" (owner replied, thread still open) is what needs my
+# attention next, so it's the state worth highlighting; "pending" is still on
+# the owner and needs nothing from me, and "resolved" is settled.
+def threadsColors: {pending: "dim", answered: "yellow", resolved: "green"};
 
 def viewedCell:
   ($viewed[.number | tostring] // null) as $v
@@ -127,7 +120,7 @@ def cells:
     STATUS:     approvalDecision(._approvalStats; $approvalThreshold),
     APPROVALS:  approvalsCell(._approvalStats; $approvalThreshold),
     MINE:       mineState,
-    THREADS:    threadsCell(threadsMineTotal($threads); threadsMineAnswered($threads)),
+    THREADS:    threadsCell(threadsMine($threads)),
     VIEWED:     viewedCell,
     WAITING:    isoRel(waitingSince),
     UPDATED:    isoRel(.updatedAt),
@@ -182,7 +175,7 @@ def cols:
       | if $cols[$i] == "SIZE" then
           ($pr | sizePaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "THREADS" then
-          ($pr | threadsPaint) + (" " * ($w[$i] - ($c[$i] | length)))
+          ($pr | threadsPaint(threadsMine($threads); threadsColors)) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "VIEWED" then
           ($pr | viewedPaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "WAITING" then

@@ -398,25 +398,31 @@ fetch_closed_prs_with_branch_status() {
     '{prs: $prs, truncated: $truncated}'
 }
 
-# Open (non-resolved) review-thread stats and viewed-file stats aren't
-# exposed by `gh pr list`/`pr view --json` (no reviewThreads/files fields), so
-# fetch via GraphQL. Both are per-PR lookups, so they share one batched query
-# (one aliased pullRequest field per PR carrying both selections) — a single
-# round trip for the whole PR list instead of two, and instead of one per PR.
+# Review-thread stats and viewed-file stats aren't exposed by `gh pr
+# list`/`pr view --json` (no reviewThreads/files fields), so fetch via
+# GraphQL. Both are per-PR lookups, so they share one batched query (one
+# aliased pullRequest field per PR carrying both selections) — a single round
+# trip for the whole PR list instead of two, and instead of one per PR.
 #
 # Threads are split by who left the *opening* comment (a static fact about
 # the thread, not an activity trace of every reply): $2 ("mine") vs anyone
-# else ("theirs"). Each bucket also tracks how many threads are "answered" —
-# the *last* comment's author is the PR's owner, meaning the owner has since
-# replied (e.g. "Fixed") even though the thread is still open.
+# else ("theirs"). Each bucket counts every thread, resolved ones included,
+# and breaks the total into three disjoint states that sum back to it:
+#   resolved — marked resolved on GitHub
+#   answered — still open, but the *last* comment is the PR owner's, meaning
+#              they've replied (e.g. "Fixed") without the thread being closed
+#   pending  — still open with no reply from the owner yet
+# Note reviewThreads(first:100) is unpaginated (100 is GraphQL's per-page
+# max), and that cap now covers resolved threads too — a PR with a very long
+# resolved history can therefore undercount.
 #
 # Args: $1 = JSON array of PRs (needs .number and .author.login), $2 = login
 # to attribute as "mine", $3 = "threads" to skip the viewed-file half (the
 # fallback below is all-or-nothing, so a caller with no VIEWED column
 # shouldn't pay for that selection — or risk losing its thread stats to an
 # error in data it never renders). Default: both.
-# Prints: {threads: {"<number>": {"mine": {"total": N, "answered": X},
-#                                 "theirs": {"total": M, "answered": Y}}},
+# Prints: {threads: {"<number>": {"mine":   {"total": N, "pending": P, "answered": A, "resolved": R},
+#                                 "theirs": {"total": M, "pending": Q, "answered": B, "resolved": S}}},
 #          viewed:  {"<number>": {"viewed": N, "total": M}}}
 # With $3 = "threads", .viewed is an empty map.
 fetch_pr_review_state() {
@@ -442,6 +448,17 @@ fetch_pr_review_state() {
   # to empty maps (every PR renders "-") and keep going.
   result=$(gh api graphql -f query="$query" -f owner="$owner" -f repo="$repo_name" 2>/dev/null \
     | jq --arg me "$me" --argjson prs "$prs" --argjson wantViewed "$want_viewed" '
+        # Input is the thread list for one bucket; $owner is the login of the
+        # PR author, whose reply is what makes an open thread "answered".
+        def bucketStats($owner):
+          ([.[] | select(.isResolved)] | length) as $resolved
+          | [.[] | select(.isResolved | not)] as $open
+          | ([$open[] | select(.lastComments.nodes[0].author.login == $owner)] | length) as $answered
+          | { total: length,
+              pending: (($open | length) - $answered),
+              answered: $answered,
+              resolved: $resolved };
+
         (reduce $prs[] as $pr ({}; .[$pr.number | tostring] = $pr.author.login)) as $owners
         | .data.repository
         | to_entries
@@ -450,13 +467,9 @@ fetch_pr_review_state() {
               key: .num,
               value: (
                 ($owners[.num] // "") as $owner
-                | [.value.reviewThreads.nodes[]? | select(.isResolved | not)] as $threads
-                | ($threads | map(select(.comments.nodes[0].author.login == $me))) as $mine
-                | ($threads | map(select(.comments.nodes[0].author.login != $me))) as $theirs
-                | { mine:   { total: ($mine | length),
-                              answered: ([$mine[]   | select(.lastComments.nodes[0].author.login == $owner)] | length) },
-                    theirs: { total: ($theirs | length),
-                              answered: ([$theirs[] | select(.lastComments.nodes[0].author.login == $owner)] | length) } }
+                | [.value.reviewThreads.nodes[]?] as $threads
+                | { mine:   ($threads | map(select(.comments.nodes[0].author.login == $me)) | bucketStats($owner)),
+                    theirs: ($threads | map(select(.comments.nodes[0].author.login != $me)) | bucketStats($owner)) }
               )
             }) | from_entries),
             viewed: (if $wantViewed then (map({

@@ -204,18 +204,55 @@ def approvalsPaint($stats; $approvalThreshold):
   | (")" | dim) as $suffix
   | $num + $mid + $sep + $staleNum + $suffix;
 
-# Open review-thread stats, keyed by PR number, as
-# {"mine": {"total": N, "answered": X}, "theirs": {"total": M, "answered": Y}}
-# (see fetch_pr_review_state in common.sh for how $map is built and what
-# "answered" means).
-def threadsMineTotal($map): ($map[.number | tostring].mine.total // 0);
-def threadsMineAnswered($map): ($map[.number | tostring].mine.answered // 0);
-def threadsTheirsTotal($map): ($map[.number | tostring].theirs.total // 0);
-def threadsTheirsAnswered($map): ($map[.number | tostring].theirs.answered // 0);
+# Review-thread stats, keyed by PR number, as {"mine": <bucket>, "theirs":
+# <bucket>} where each bucket is {"total": N, "pending": P, "answered": A,
+# "resolved": R} — see fetch_pr_review_state in common.sh for how $map is
+# built and what the three states mean. Missing PR (failed lookup) yields {},
+# which the // 0 defaults below turn into a "-" cell.
+def threadsMine($map):   ($map[.number | tostring].mine   // {});
+def threadsTheirs($map): ($map[.number | tostring].theirs // {});
 
-# Plain-text formatter shared by todo.jq/mine.jq — each picks its own bucket
-# (mine vs theirs) and paint emphasis, since which count matters most differs
-# by perspective.
-def threadsCell($total; $answered):
-  if $total == 0 then "-"
-  else "\($total) (\($answered) answered)" end;
+# The non-zero parts of a bucket, in pending -> answered -> resolved order.
+# Zero states are dropped so a settled PR reads "4 (4 resolved)" instead of
+# padding out every row with noise; since the three sum to total, a non-zero
+# total always leaves at least one segment.
+def threadSegments($stats):
+  [ {n: ($stats.pending  // 0), label: "pending"},
+    {n: ($stats.answered // 0), label: "answered"},
+    {n: ($stats.resolved // 0), label: "resolved"} ]
+  | map(select(.n > 0));
+
+# "N (P pending, A answered, R resolved)" — N total threads in the bucket,
+# split into the three states (zero ones omitted). Plain-text form shared by
+# todo.jq/mine.jq; "-" when the bucket is empty.
+def threadsCell($stats):
+  ($stats.total // 0) as $t
+  | if $t == 0 then "-"
+    else "\($t) (" + (threadSegments($stats) | map("\(.n) \(.label)") | join(", ")) + ")"
+    end;
+
+# Colors are named rather than passed as functions (jq has no first-class
+# functions) so each caller can pick its own emphasis per state. Only the
+# names the THREADS callers use are mapped; anything else falls back to dim.
+def paintByName($name):
+  if   $name == "yellow" then yellow
+  elif $name == "green"  then green
+  else dim end;
+
+# Colored form of threadsCell, with $colors mapping each state's label to a
+# paintByName color — which state deserves emphasis differs by perspective
+# (see todo.jq/mine.jq). Because zero segments are omitted, a segment being
+# present already means it is non-zero, so the colors are unconditional.
+# Both forms are built from the same threadSegments list, which is what keeps
+# them emitting identical visible characters — required, since colWidths sizes
+# columns off the plain cell and callers pad by its length.
+def threadsPaint($stats; $colors):
+  ($stats.total // 0) as $t
+  | if $t == 0 then ("-" | dim)
+    else
+      ("\($t)" | cyan) + (" (" | dim)
+      + ( threadSegments($stats)
+          | map(. as $s | "\($s.n) \($s.label)" | paintByName($colors[$s.label]))
+          | join(", " | dim) )
+      + (")" | dim)
+    end;
