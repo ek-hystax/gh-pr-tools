@@ -182,13 +182,16 @@ If several open PRs share the same ticket in the title, lookup errors and lists 
 ### `prd` — reviewers for one PR
 
 ```text
-gh pr-tools prd <pr-number | TICKET-123 | jira-link | branch-name>
+gh pr-tools prd [--watch[=INTERVAL]] <pr-number | TICKET-123 | jira-link | branch-name>
 ```
 
 Shows approvers and who's still pending, expanding team review requests to members. The `decision:` line and "Approved by:" list use your profile's approval threshold (see `mine`, below) rather than GitHub's `reviewDecision`; approvers who belong to one of your own teams are tagged `(team)`.
 
+Pass `--watch` (`-w`) to refresh the PR details in place every 5 minutes, or set an interval such as `--watch=30s`, `--watch=10m`, or `-w=1h`.
+
 ```bash
 gh pr-tools prd 886
+gh pr-tools prd --watch 886
 gh pr-tools prd KF-1309
 gh pr-tools prd https://yourorg.atlassian.net/browse/KF-1309
 gh pr-tools prd bug/KF-1309

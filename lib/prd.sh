@@ -5,9 +5,44 @@ set -euo pipefail
 
 dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$dir/common.sh"
+
+watch=false
+watch_interval=5m
+arg=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --watch|-w) watch=true; shift ;;
+    --watch=*|-w=*) watch=true; watch_interval="${1#*=}"; shift ;;
+    -*)
+      echo "gh pr-tools prd: unknown option '$1' (supported: --watch[=INTERVAL])" >&2
+      exit 1
+      ;;
+    *)
+      [ -z "$arg" ] || {
+        echo "usage: gh pr-tools prd [--watch[=INTERVAL]] <pr-number | TICKET-123 | jira-link | branch-name>" >&2
+        exit 1
+      }
+      arg="$1"
+      shift
+      ;;
+  esac
+done
+
+[ -n "$arg" ] || {
+  echo "usage: gh pr-tools prd [--watch[=INTERVAL]] <pr-number | TICKET-123 | jira-link | branch-name>" >&2
+  exit 1
+}
+
+if [ "$watch" = true ]; then
+  watch_seconds=$(watch_interval_seconds "$watch_interval") || {
+    echo "gh pr-tools prd: invalid watch interval '$watch_interval' (expected e.g. 30s, 5m, or 1h)" >&2
+    exit 1
+  }
+  refresh_command "$watch_seconds" "$watch_interval" "gh pr-tools prd $arg" "$0" "$arg"
+fi
+
 load_config
 
-arg="${1:?usage: gh pr-tools prd <pr-number | TICKET-123 | jira-link | branch-name>}"
 me="${GH_USERNAME:-$(gh api user --jq .login)}"
 ticket_pattern="${JIRA_PREFIX:-[A-Za-z]+}-[0-9]+"
 

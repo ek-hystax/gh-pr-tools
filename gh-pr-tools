@@ -14,7 +14,8 @@ commands:
   profile list                      list all profiles ((cwd) marks a checkout match)
   profile show [name]               print a profile's settings (default: currently resolved)
   profile remove <name>             delete a profile
-  prd <pr|TICKET-123|link|branch>   show a PR's approvers and pending reviewers
+  prd [--watch[=INTERVAL]] <pr|TICKET-123|link|branch>
+                                    show a PR's approvers and pending reviewers
   todo [--long] [--watch[=INTERVAL]]
                                     list open PRs you're a reviewer on (--watch default: 5m)
   mine [--long] [--watch[=INTERVAL]]
