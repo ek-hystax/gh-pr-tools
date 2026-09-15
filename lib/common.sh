@@ -8,6 +8,40 @@ tgmap_file="$config_dir/tg-map.json"
 # Optional override set by the entry point from --profile / -p.
 GH_PR_TOOLS_PROFILE="${GH_PR_TOOLS_PROFILE:-}"
 
+# Re-run a command without an intermediary terminal renderer, so ANSI styling
+# and OSC 8 hyperlinks reach the terminal intact. The next frame is fetched
+# before the current one is cleared, avoiding a blank screen during API calls.
+# Convert a positive integer interval with an optional s/m/h suffix to seconds.
+watch_interval_seconds() {
+  local value="$1" amount unit multiplier
+  [[ "$value" =~ ^([1-9][0-9]*)([smh]?)$ ]] || return 1
+  amount="${BASH_REMATCH[1]}"
+  unit="${BASH_REMATCH[2]}"
+  case "$unit" in
+    ""|s) multiplier=1 ;;
+    m) multiplier=60 ;;
+    h) multiplier=3600 ;;
+  esac
+  printf '%s\n' "$((amount * multiplier))"
+}
+
+# $1 = interval seconds, $2 = display interval, $3 = display label,
+# remaining args = command.
+refresh_command() {
+  local interval_seconds="$1" interval_display="$2" label="$3" output updated_at
+  shift 3
+
+  while true; do
+    output=$("$@")
+    updated_at=$(date '+%Y-%m-%d %H:%M:%S')
+    printf '\033[2J\033[H'
+    printf 'Every %s: %s (Ctrl-C to stop)\n' "$interval_display" "$label"
+    printf 'Last updated: %s\n\n' "$updated_at"
+    printf '%s\n' "$output"
+    sleep "$interval_seconds"
+  done
+}
+
 validate_profile_name() {
   local name="$1"
   if [[ ! "$name" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]]; then

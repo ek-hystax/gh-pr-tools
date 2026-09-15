@@ -4,15 +4,36 @@ set -euo pipefail
 
 dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$dir/common.sh"
-load_config
 
 long=false
+watch=false
+watch_interval=5m
+command_args=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --long|-l) long=true; shift ;;
-    *) echo "gh pr-tools todo: unknown option '$1' (supported: --long)" >&2; exit 1 ;;
+    --long|-l) long=true; command_args+=("$1"); shift ;;
+    --watch|-w)
+      watch=true
+      if [ $# -gt 1 ] && [[ "$2" != -* ]]; then watch_interval="$2"; shift 2
+      else shift
+      fi
+      ;;
+    --watch=*|-w=*) watch=true; watch_interval="${1#*=}"; shift ;;
+    *) echo "gh pr-tools todo: unknown option '$1' (supported: --long, --watch[=INTERVAL])" >&2; exit 1 ;;
   esac
 done
+
+if [ "$watch" = true ]; then
+  watch_seconds=$(watch_interval_seconds "$watch_interval") || {
+    echo "gh pr-tools todo: invalid watch interval '$watch_interval' (expected e.g. 30s, 5m, or 1h)" >&2
+    exit 1
+  }
+  watch_label="gh pr-tools todo"
+  [ "${#command_args[@]}" -eq 0 ] || watch_label+=" ${command_args[*]}"
+  refresh_command "$watch_seconds" "$watch_interval" "$watch_label" "$0" "${command_args[@]}"
+fi
+
+load_config
 
 ticket_pattern="${JIRA_PREFIX:-[A-Za-z]+}-[0-9]+"
 

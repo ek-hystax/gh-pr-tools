@@ -198,10 +198,12 @@ gh pr-tools -p work prd 886
 ### `todo` — PRs you're reviewing
 
 ```text
-gh pr-tools todo [--long]
+gh pr-tools todo [--long] [--watch[=INTERVAL]]
 ```
 
 Lists open PRs where you're an actual reviewer — currently requested, or you've left any review, including ones you've already approved. By default shows a compact table (PR, title, author, status, your review state, approvals, review threads, viewed-file progress, whether new changes landed since your review, how long it's been in its current state, URL); pass `--long` for all columns, adding last-updated, age, size, CI, merge status, and Jira link.
+
+Pass `--watch` (`-w`) to refresh in place every 5 minutes until Ctrl-C, with the last successful update time shown above the table. Supply a positive integer with an optional `s`, `m`, or `h` suffix to change the interval, such as `--watch=30s`, `--watch 10m`, or `-w=1h`. This built-in mode preserves terminal formatting, unlike `procps-ng watch`.
 
 The `THREADS` column counts review threads *you* opened — a thread is attributed to whoever left its opening comment, not every participant. It shows `N (P pending, A answered, R resolved)`, where `N` is every thread you started on the PR and the three states are disjoint and sum to `N`:
 
@@ -222,10 +224,12 @@ The `PENDING SINCE` column is color-graded by how long the PR has been in its cu
 ### `mine` — your own open PRs
 
 ```text
-gh pr-tools mine [--long]
+gh pr-tools mine [--long] [--watch[=INTERVAL]]
 ```
 
 Lists your own open, non-draft PRs with the columns you need to triage them: review status (Approved / Approved (stale) / Awaiting Approval), review threads, how long it's been pending (`PENDING SINCE`, same color grading as `todo`), number of approvals, CI status, PR URL, and Jira link (same branch-name convention as `todo`). Pass `--long` to add age, size, and merge status.
+
+`--watch` (`-w`) provides the same configurable refresh as `todo` and can be combined with any other flag.
 
 `STATUS` is driven by your profile's approval threshold, not GitHub's `reviewDecision` field: it's "Approved" once distinct approvals meet your threshold, "Approved (stale)" if the threshold is only met by counting approvers whose approval is against an older commit, otherwise "Awaiting Approval" — this column doesn't distinguish an outright changes-requested review from one nobody has looked at yet. `APPROVALS` shows `total (team)` — total distinct approvers, and in parens how many of those are members of a team you belong to — colored green once the total meets your threshold. Set your threshold via `gh pr-tools init` or check it with `gh pr-tools profile show`.
 
