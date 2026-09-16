@@ -1,7 +1,7 @@
 include "common";
 
 # Inputs supplied by todo.sh: $me, $threads, $viewed, $teamMembers, $teamLogins,
-# $approvalThreshold, $jiraBase, $jiraPattern, $long, $shortLinks
+# $approvalThreshold, $jiraBase, $jiraPattern, $jiraStatuses, $long, $shortLinks
 
 def yn($b): if $b then "yes" else "-" end;
 
@@ -129,33 +129,35 @@ def cells:
     SIZE:       size,
     CI:         ciState,
     MERGE:      merge,
-    JIRA:       jiraFromBranch($jiraBase; $jiraPattern)
+    JIRA:       jiraCell($jiraBase; jiraKeyFromBranch($jiraPattern); $shortLinks),
+    JIRA_STATUS: jiraStatusText($jiraStatuses; jiraKeyFromBranch($jiraPattern))
   };
 
 def headers:
   {
     PR: "PR", TITLE: "TITLE", AUTHOR: "AUTHOR", STATUS: "STATUS", APPROVALS: "APPROVALS", MINE: "MINE",
     THREADS: "THREADS", VIEWED: "VIEWED", WAITING: "PENDING SINCE", UPDATED: "UPDATED", AGE: "AGE", RE_REVIEW: "NEW CHANGES",
-    SIZE: "SIZE", CI: "CI", MERGE: "MERGE", JIRA: "JIRA"
+    SIZE: "SIZE", CI: "CI", MERGE: "MERGE", JIRA: "JIRA", JIRA_STATUS: "JIRA STATUS"
   };
 
-# SIZE, THREADS, VIEWED, WAITING need the raw PR object, not cell text, so the
-# render loop special-cases them instead of routing through paint($col).
+# SIZE, THREADS, VIEWED, WAITING and JIRA_STATUS need the raw PR object, not
+# cell text, so the render loop special-cases them instead of routing through
+# paint($col).
 def paint($col):
-  if   $col == "PR" then green
+  if   $col == "PR" then linkStyle
   elif $col == "AUTHOR" then cyan
   elif $col == "STATUS" then paintDecision
   elif $col == "MINE" then paintMine
   elif $col == "RE_REVIEW" then (if . == "yes" then yellow else dim end)
   elif $col == "CI" then paintCi
   elif $col == "MERGE" then paintMerge
-  elif $col == "UPDATED" or $col == "AGE" or $col == "JIRA" then dim
+  elif $col == "UPDATED" or $col == "AGE" then dim
   else . end;
 
 # THREADS and VIEWED sit right after MINE in both column sets, rather than at the end.
 def cols:
-  if $long then ["TITLE", "PR", "AUTHOR", "STATUS", "MINE", "APPROVALS", "THREADS", "VIEWED", "RE_REVIEW", "WAITING", "UPDATED", "CI", "JIRA", "AGE", "SIZE", "MERGE"]
-  else ["TITLE", "PR", "AUTHOR", "STATUS", "MINE", "APPROVALS", "THREADS", "VIEWED", "RE_REVIEW", "WAITING"]
+  if $long then ["TITLE", "PR", "AUTHOR", "STATUS", "MINE", "APPROVALS", "THREADS", "VIEWED", "RE_REVIEW", "WAITING", "UPDATED", "CI", "JIRA", "JIRA_STATUS", "AGE", "SIZE", "MERGE"]
+  else ["TITLE", "PR", "AUTHOR", "STATUS", "MINE", "APPROVALS", "THREADS", "VIEWED", "RE_REVIEW", "WAITING", "JIRA", "JIRA_STATUS"]
   end;
 
 # Main
@@ -172,7 +174,7 @@ def cols:
   | $plain[$r] as $c
   | [ range(0; $c | length) as $i
       | if $cols[$i] == "PR" then
-          ($c[$i] | green | hyperlink($pr.url)) + (" " * ($w[$i] - ($c[$i] | length)))
+          ($c[$i] | linkStyle | hyperlink($pr.url)) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "SIZE" then
           ($pr | sizePaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "THREADS" then
@@ -181,6 +183,10 @@ def cols:
           ($pr | viewedPaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "WAITING" then
           ($pr | waitingPaint) + (" " * ($w[$i] - ($c[$i] | length)))
+        elif $cols[$i] == "JIRA" then
+          ($pr | jiraCellPaint($jiraBase; jiraKeyFromBranch($jiraPattern); $shortLinks)) + (" " * ($w[$i] - ($c[$i] | length)))
+        elif $cols[$i] == "JIRA_STATUS" then
+          ($pr | jiraStatusPaint($jiraStatuses; jiraKeyFromBranch($jiraPattern))) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "APPROVALS" then
           ($pr | approvalsPaint(._approvalStats; $approvalThreshold)) + (" " * ($w[$i] - ($c[$i] | length)))
         else

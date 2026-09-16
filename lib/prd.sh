@@ -66,7 +66,13 @@ else
   my_logins='[]'
 fi
 
+# One PR, so one key at most — fetched inline rather than backgrounded like
+# todo/mine, where the request overlaps a whole fan-out of other lookups.
+jira_statuses=$(fetch_jira_statuses "$(jq -L "$dir" -c --arg jiraPattern "$ticket_pattern" \
+  'include "common"; [jiraKeyFromBranchOrTitle($jiraPattern) | select(. != null)]' <<<"$json")")
+
 jq -r -L "$dir" \
+  --argjson jiraStatuses "$jira_statuses" \
   --argjson teamMembers "$members" \
   --argjson teamLogins "$my_logins" \
   --argjson approvalThreshold "${APPROVAL_THRESHOLD:-1}" \

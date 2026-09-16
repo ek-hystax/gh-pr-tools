@@ -14,6 +14,12 @@ def yellow: c("33");
 def red:    c("31");
 def boldRed: c("1;31");
 
+# Clickable cells (PR, JIRA). Cyan matches the AUTHOR column, and the
+# underline is what actually marks the cell as a link: OSC 8 targets are
+# invisible, so without it a hyperlinked cell looks like any other colored
+# text. One definition so the two columns can never drift apart.
+def linkStyle: c("4;36");
+
 # OSC 8 explicit hyperlink: the input is the visible label and $url is the
 # hidden destination. Supported by WezTerm and other modern terminals.
 def hyperlink($url):
@@ -61,29 +67,75 @@ def waitingPaintFor($sinceIso):
     else ($text | waitPaint(now - ($sinceIso | fromdateiso8601)))
     end;
 
+# First ticket key in $text, upper-cased, or null when there is none.
+# Upper-casing matters beyond cosmetics: a branch may well be bug/kf-1309,
+# while Jira keys — and the keys bulkfetch echoes back — are always upper
+# case, so the status map below would miss every lower-case branch otherwise.
+def jiraKey($jiraPattern; $text):
+  ("(?<t>\\b" + $jiraPattern + "\\b)") as $re
+  | if ($text | test($re; "i"))
+    then ($text | capture($re; "i").t | ascii_upcase)
+    else null
+    end;
+
+# Ticket key from branch name only (todo/mine convention)
+def jiraKeyFromBranch($jiraPattern):
+  jiraKey($jiraPattern; (.headRefName // ""));
+
+# Ticket key from branch name, falling back to PR title (prd convention)
+def jiraKeyFromBranchOrTitle($jiraPattern):
+  jiraKey($jiraPattern; "\(.headRefName // "") \(.title // "")");
+
+def jiraUrl($jiraBase; $key):
+  if $jiraBase == "" or $key == null then "-" else "\($jiraBase)/\($key)" end;
+
+# JIRA cell text: the full browse URL, or just the ticket key under
+# --short-links. The URL is by far the widest cell in these tables and every
+# character before the key is identical on every row, so the short form is
+# the same trade the PR column already makes.
+def jiraCell($jiraBase; $key; $short):
+  if $jiraBase == "" or $key == null then "-"
+  elif $short then $key
+  else jiraUrl($jiraBase; $key)
+  end;
+
+# Under --short-links the visible label no longer contains the URL, so the
+# cell carries it as an OSC 8 target instead — keeping the ticket clickable
+# exactly as the PR column stays clickable when it shows "#1154".
+def jiraCellPaint($jiraBase; $key; $short):
+  jiraCell($jiraBase; $key; $short) as $text
+  | if $text == "-" then ($text | dim)
+    else ($text | linkStyle | hyperlink(jiraUrl($jiraBase; $key)))
+    end;
+
 # Ticket from branch name only (todo/mine convention)
 def jiraFromBranch($jiraBase; $jiraPattern):
-  if $jiraBase == "" then "-"
-  else
-    (.headRefName // "") as $branch
-    | ("(?<t>\\b" + $jiraPattern + "\\b)") as $re
-    | if ($branch | test($re))
-      then "\($jiraBase)/\($branch | capture($re).t)"
-      else "-"
-      end
-  end;
+  jiraUrl($jiraBase; jiraKeyFromBranch($jiraPattern));
 
 # Ticket from branch name, falling back to PR title (prd convention)
 def jiraFromBranchOrTitle($jiraBase; $jiraPattern):
-  if $jiraBase == "" then "-"
-  else
-    "\(.headRefName // "") \(.title // "")" as $s
-    | ("(?<t>\\b" + $jiraPattern + "\\b)") as $re
-    | if ($s | test($re))
-      then "\($jiraBase)/\($s | capture($re).t)"
-      else "-"
-      end
-  end;
+  jiraUrl($jiraBase; jiraKeyFromBranchOrTitle($jiraPattern));
+
+# Jira issue status for a ticket key, from the map fetch_jira_statuses built.
+# "-" covers every reason a status can be absent — no ticket in the branch,
+# Jira not configured, the lookup failed, the issue deleted or invisible —
+# deliberately, since none of them is worth a distinct cell in a table.
+def jiraStatusText($statuses; $key):
+  if $key == null then "-" else ($statuses[$key] // "-") end;
+
+# Colored by status name. Jira's statusCategory would be the portable choice
+# — three values every workflow maps onto — but it cannot tell "Approved"
+# from "Review": both are "indeterminate", and those are precisely the two
+# states worth distinguishing at a glance. Anything unrecognised stays dim,
+# like the header row, rather than guessing. Extending this is one more
+# branch per name.
+def jiraStatusPaint($statuses; $key):
+  jiraStatusText($statuses; $key) as $name
+  | ($name | ascii_downcase) as $lower
+  | if   $lower == "approved" then ($name | green)
+    elif $lower == "review"   then ($name | yellow)
+    else ($name | dim)
+    end;
 
 # Rollup entries are CheckRuns (status/conclusion) or StatusContexts (state only).
 def ciFail($c):

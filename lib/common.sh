@@ -242,7 +242,7 @@ resolve_pr() {
 }
 
 load_config() {
-  local name path env_cache="${GH_PR_TOOLS_TEAM_CACHE:-}"
+  local name path env_cache="${GH_PR_TOOLS_TEAM_CACHE:-}" env_token="${JIRA_API_TOKEN:-}"
   name=$(resolve_profile)
   path=$(profile_path "$name")
   # shellcheck source=/dev/null
@@ -253,6 +253,11 @@ load_config() {
   # A hand-edited or pre-existing profile could set this to 0 or something
   # non-numeric; init.sh only validates its own prompt, not the file directly.
   [[ "$APPROVAL_THRESHOLD" =~ ^[0-9]+$ ]] && [ "$APPROVAL_THRESHOLD" -ge 1 ] || APPROVAL_THRESHOLD=1
+  # Sourcing the profile overwrites anything the environment had set, so an
+  # environment JIRA_API_TOKEN is captured before the source and restored
+  # here — same precedence rule (and same reason) as GH_PR_TOOLS_TEAM_CACHE.
+  [ -n "$env_token" ] && JIRA_API_TOKEN="$env_token"
+  normalize_jira_config
   # Resolved here rather than when this file is sourced, so a profile can set
   # GH_PR_TOOLS_TEAM_CACHE like every other setting; an environment value
   # still wins, since that's the documented per-invocation override.
@@ -516,5 +521,119 @@ fetch_pr_review_state() {
             }) | from_entries) else {} end) }
       ') || result="$empty"
   echo "$result" | jq -e . >/dev/null 2>&1 || result="$empty"
+  echo "$result"
+}
+
+# Jira ----------------------------------------------------------------------
+#
+# Every Jira setting lives in the profile file, the token included — it is a
+# local env file, sourced like the rest of the config. An environment
+# JIRA_API_TOKEN overrides the profile for a single invocation (CI, a
+# throwaway token), the same precedence GH_PR_TOOLS_TEAM_CACHE uses.
+#
+# JIRA_BASE_URL (the /browse URL) predates JIRA_SITE and is what older
+# profiles carry. normalize_jira_config derives whichever of the two is
+# missing, so an existing profile keeps working untouched and a new one only
+# needs JIRA_SITE.
+
+# Fill in JIRA_SITE / JIRA_BASE_URL from whichever one the profile set, and
+# strip the trailing slash both the prompt and hand-editing tend to leave.
+normalize_jira_config() {
+  JIRA_SITE="${JIRA_SITE:-}"
+  JIRA_BASE_URL="${JIRA_BASE_URL:-}"
+  JIRA_SITE="${JIRA_SITE%/}"
+  JIRA_BASE_URL="${JIRA_BASE_URL%/}"
+  if [ -z "$JIRA_SITE" ] && [ -n "$JIRA_BASE_URL" ]; then
+    JIRA_SITE="${JIRA_BASE_URL%/browse}"
+    JIRA_SITE="${JIRA_SITE%/}"
+  fi
+  if [ -z "$JIRA_BASE_URL" ] && [ -n "$JIRA_SITE" ]; then
+    JIRA_BASE_URL="$JIRA_SITE/browse"
+  fi
+  JIRA_EMAIL="${JIRA_EMAIL:-}"
+  JIRA_API_TOKEN="${JIRA_API_TOKEN:-}"
+  JIRA_CLOUD_ID="${JIRA_CLOUD_ID:-}"
+}
+
+# The site host is not a usable API base on every tenant: a Cloud org can have
+# an auth policy that makes <site>.atlassian.net ignore API-token credentials
+# and answer as an anonymous user — HTTP 200 with an empty result rather than
+# a 401, for a valid and an invalid token alike. api.atlassian.com/ex/jira
+# honors the token and returns a real 401 when it is wrong, so prefer it
+# whenever a cloud ID is known.
+#
+# Falls back to the site host when there is no cloud ID, which is also the
+# correct base for a Data Center/Server instance (no gateway, no cloud ID).
+jira_api_base() {
+  if [ -n "${JIRA_CLOUD_ID:-}" ]; then
+    printf 'https://api.atlassian.com/ex/jira/%s' "$JIRA_CLOUD_ID"
+  else
+    printf '%s' "${JIRA_SITE:-}"
+  fi
+}
+
+# A Cloud site publishes its own cloud ID unauthenticated, so init can resolve
+# it without the token and a hand-written profile can leave it out. Prints
+# nothing for a non-Cloud instance or an unreachable site.
+jira_lookup_cloud_id() { # $1: site root
+  curl -sS --max-time 10 "$1/_edge/tenant_info" 2>/dev/null \
+    | jq -r 'if type == "object" and (.cloudId | type) == "string" then .cloudId else empty end' 2>/dev/null
+}
+
+# True when there is enough configuration to ask Jira for issue statuses.
+# False is not an error: the status lookup is skipped and links still render.
+jira_status_enabled() {
+  [ -n "${JIRA_SITE:-}" ] && [ -n "${JIRA_EMAIL:-}" ] && [ -n "${JIRA_API_TOKEN:-}" ]
+}
+
+# Jira issue statuses for a set of ticket keys, in one bulkfetch call.
+#
+# bulkfetch is used rather than a JQL `key in (...)` search because the keys
+# here are scraped out of branch names: a key for a deleted or moved issue
+# makes JQL fail the whole query, while bulkfetch just leaves it out of the
+# response. Its cap is 1000 keys per call when the request names fields
+# explicitly (as this one does) — far beyond the number of open PRs any of
+# these commands lists, so there is no chunking.
+#
+# Args: $1 = JSON array of upper-cased issue keys.
+# Prints a JSON object: {"KF-1309": "In Review"}
+# An empty object means "no statuses" and always renders as "-"; it is the
+# result for every failure mode as well, matching fetch_pr_review_state's
+# policy of degrading rather than aborting a whole command over one lookup.
+fetch_jira_statuses() {
+  local keys="$1" empty='{}' body code result
+  jira_status_enabled || { echo "$empty"; return; }
+  [ "$(jq 'length' <<<"$keys")" -gt 0 ] || { echo "$empty"; return; }
+
+  body=$(mktemp)
+  # The token goes on argv here, where it is briefly visible to `ps`. That is
+  # the same exposure as the profile file it came from, which is plain text.
+  code=$(jq -nc --argjson keys "$keys" '{issueIdsOrKeys: $keys, fields: ["status"]}' \
+    | curl -sS -o "$body" -w '%{http_code}' --max-time 20 \
+        -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+        -X POST "$(jira_api_base)/rest/api/3/issue/bulkfetch" \
+        -H 'Content-Type: application/json' \
+        --data-binary @- 2>/dev/null) || code=000
+
+  case "$code" in
+    200) ;;
+    401|403)
+      # Worth one line on stderr, unlike a timeout: a rejected token stays
+      # rejected, so silence here would leave the column blank indefinitely
+      # with nothing pointing at the cause. Jira API tokens expire within a
+      # year, so this is a question of when, not whether.
+      echo "gh pr-tools: Jira rejected the API token (HTTP $code) —" \
+           "ticket status unavailable; re-run: gh pr-tools init" >&2
+      rm -f "$body"; echo "$empty"; return ;;
+    *)
+      rm -f "$body"; echo "$empty"; return ;;
+  esac
+
+  result=$(jq '[.issues[]?
+                | select(.key != null and .fields.status.name != null)
+                | {key: .key, value: .fields.status.name}]
+               | from_entries' "$body" 2>/dev/null) || result="$empty"
+  rm -f "$body"
+  jq -e . >/dev/null 2>&1 <<<"$result" || result="$empty"
   echo "$result"
 }

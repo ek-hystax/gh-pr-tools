@@ -1,7 +1,7 @@
 include "common";
 
 # Inputs supplied by prd.sh: $teamMembers, $teamLogins, $approvalThreshold,
-# $tgmap, $jiraBase, $jiraPattern
+# $tgmap, $jiraBase, $jiraPattern, $jiraStatuses
 
 def tglink($login):
   ($tgmap[$login] // "") as $u
@@ -82,7 +82,11 @@ def paintReason:
   ( "\("author:" | dim) \($pr.author.login | cyan)   \("updated:" | dim) \(isoRel($pr.updatedAt))   \("decision:" | dim) \(($pr | approvalStats($author; $teamLogins)) as $stats | (approvalDecision($stats; $approvalThreshold)) as $d | ($d | ascii_downcase | paintDecision))" ),
   "",
   ( "\("PR:" | dim) \($pr.url)" ),
-  ( "\("Jira:" | dim) \($pr | jiraFromBranchOrTitle($jiraBase; $jiraPattern))" ),
+  ( ($pr | jiraKeyFromBranchOrTitle($jiraPattern)) as $jiraKey
+    | "\("Jira:" | dim) \(jiraUrl($jiraBase; $jiraKey))"
+      + (if jiraStatusText($jiraStatuses; $jiraKey) == "-" then ""
+         else "   " + jiraStatusPaint($jiraStatuses; $jiraKey)
+         end) ),
   ( "\("Branch:" | dim) \($pr.headRefName // "-") -> \($pr.baseRefName // "-")" ),
   "",
   ( if ($approved | length) == 0

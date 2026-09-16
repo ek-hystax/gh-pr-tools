@@ -78,10 +78,23 @@ prs=$(cat "$tmp/prs")
 # lookup degrades all-or-nothing, an error in it would blank THREADS too.
 # A bit slower than todo/prd if you have a lot of open PRs, but negligible
 # for a normal workload.
+# Ticket keys come out of the PR list here rather than inside mine.jq, since
+# the whole point is to ask Jira about all of them in one request before the
+# render pass runs. Same extraction the JIRA column uses, so the two agree.
+keys=$(jq -L "$dir" -c --arg jiraPattern "$ticket_pattern" \
+  'include "common"; [.[] | jiraKeyFromBranch($jiraPattern) | select(. != null)] | unique' <<<"$prs")
+
+# Independent of the thread lookup, so the two round trips overlap.
+fetch_jira_statuses "$keys" > "$tmp/jira" &
+jira_pid=$!
+
 threads=$(fetch_pr_review_state "$prs" "$me" threads | jq '.threads')
+wait "$jira_pid"
+jira_statuses=$(cat "$tmp/jira")
 
 jq -rn -L "$dir" \
   --argjson threads "$threads" \
+  --argjson jiraStatuses "$jira_statuses" \
   --argjson teamLogins "$my_logins" \
   --argjson approvalThreshold "${APPROVAL_THRESHOLD:-1}" \
   --arg jiraBase "${JIRA_BASE_URL:-}" \

@@ -44,9 +44,12 @@ ticket_pattern="${JIRA_PREFIX:-[A-Za-z]+}-[0-9]+"
 # directly requires an extra per-PR lookup under the hood. Only ask for them
 # under --long, where they're actually shown. createdAt is always fetched
 # (cheap, part of the base search response) since it drives sorting.
-fields="number,title,author,reviews,reviewRequests,url,updatedAt,createdAt,headRefOid"
+# headRefName is in the base set despite the note above: it comes back in the
+# search response itself (measurably free), and the JIRA columns are shown in
+# the default view, not just under --long.
+fields="number,title,author,reviews,reviewRequests,url,updatedAt,createdAt,headRefOid,headRefName"
 if [ "$long" = true ]; then
-  fields="$fields,headRefName,changedFiles,additions,deletions,mergeable,mergeStateStatus,statusCheckRollup"
+  fields="$fields,changedFiles,additions,deletions,mergeable,mergeStateStatus,statusCheckRollup"
 fi
 
 # Every fetch below is a network round trip, so independent ones run as
@@ -131,11 +134,21 @@ review_pid=$!
 teams_members_map "$(jq -r '[.[].reviewRequests[]? | .slug // empty | split("/") | last] | unique | .[]' <<<"$prs")" > "$tmp/members" &
 members_pid=$!
 
+# Ticket keys come out of the PR list here rather than inside todo.jq, since
+# the whole point is to ask Jira about all of them in one request before the
+# render pass runs. Launched here so it overlaps the two lookups above.
+keys=$(jq -L "$dir" -c --arg jiraPattern "$ticket_pattern" \
+  'include "common"; [.[] | jiraKeyFromBranch($jiraPattern) | select(. != null)] | unique' <<<"$prs")
+fetch_jira_statuses "$keys" > "$tmp/jira" &
+jira_pid=$!
+
 wait "$review_pid"
 threads=$(jq '.threads' "$tmp/review-state")
 viewed=$(jq '.viewed' "$tmp/review-state")
 wait "$members_pid"
 members=$(cat "$tmp/members")
+wait "$jira_pid"
+jira_statuses=$(cat "$tmp/jira")
 
 # Union of the current user's team memberships, for splitting APPROVALS into
 # total vs. teammate counts. Reuses $my_teams_json (already fetched above)
@@ -149,6 +162,7 @@ jq -rn -L "$dir" \
   --argjson teamMembers "$members" \
   --argjson teamLogins "$my_logins" \
   --argjson approvalThreshold "${APPROVAL_THRESHOLD:-1}" \
+  --argjson jiraStatuses "$jira_statuses" \
   --arg jiraBase "${JIRA_BASE_URL:-}" \
   --arg jiraPattern "$ticket_pattern" \
   --argjson long "$long" \

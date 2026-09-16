@@ -47,8 +47,15 @@ case "$cmd" in
     echo "REPO=$REPO"
     echo "ORG=$ORG"
     echo "GH_USERNAME=${GH_USERNAME:-}"
+    normalize_jira_config
     echo "JIRA_PREFIX=${JIRA_PREFIX:-}"
+    echo "JIRA_SITE=${JIRA_SITE:-}"
     echo "JIRA_BASE_URL=${JIRA_BASE_URL:-}"
+    echo "JIRA_EMAIL=${JIRA_EMAIL:-}"
+    echo "JIRA_CLOUD_ID=${JIRA_CLOUD_ID:-}"
+    echo "JIRA_API_BASE=$(jira_api_base)"
+    # Presence only — printing the token would defeat the file mode.
+    echo "JIRA_API_TOKEN=$([ -n "${JIRA_API_TOKEN:-}" ] && echo '(set)' || echo '(not set)')"
     echo "APPROVAL_THRESHOLD=${APPROVAL_THRESHOLD:-1}"
     ;;
   remove)

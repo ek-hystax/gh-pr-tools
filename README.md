@@ -56,7 +56,9 @@ gh pr-tools init
 | **org**                  | Expands team review requests (e.g. the `ui` team) into individual members    |
 | **your GitHub username** | Defaults to your `gh` login; required                                        |
 | **Jira ticket prefix**   | e.g. `KF` — leave blank to match any `PROJECT-123`-style ticket              |
-| **Jira org**             | e.g. `yourorg` → builds `https://yourorg.atlassian.net/browse` — leave blank to skip Jira links |
+| **Jira site**            | e.g. `yourorg` or `https://yourorg.atlassian.net` — leave blank to skip Jira links |
+| **Jira account email**   | Only asked when a site is set. The Atlassian account an API token belongs to — leave blank for links without ticket status |
+| **Jira API token**       | Only asked when an email is set. Input is hidden. Buys the ticket-status lookup; leave blank for links only. See [Jira token](#jira-token) |
 | **approval threshold**   | How many approvals *you* personally require to call a PR "Approved" in `mine`/`prd` — defaults to `1`. Independent of GitHub's own branch-protection rule, so teams that want stricter review (e.g. 2 approvals) can set it without changing repo settings. |
 
 Settings go to `~/.config/gh-pr-tools/profiles/<name>.sh`. Re-run `gh pr-tools init` anytime to add another profile or overwrite an existing one.
@@ -152,9 +154,58 @@ GH_PR_TOOLS_TEAM_CACHE=24h
 
 An environment value beats the profile. An unparseable value (`60`, `1hour`) is reported on stderr and ignored in favour of `1h`.
 
+### Jira token
+
+Jira **links** need only a site. Showing each ticket's **status** additionally needs an
+Atlassian account email and an API token, since Jira's REST API has no anonymous read.
+
+Create a token at
+[id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens). A scoped
+token needs exactly one scope, `read:jira-work`; a classic token takes no scopes and
+inherits your account's own permissions. Read-only is enough — the tool never writes to
+Jira. Underneath, you need the **Browse projects** permission on the project, which you
+already have if you can open the tickets in a browser. Tokens expire after at most a
+year, so this will need redoing.
+
+The token is stored in the profile file like every other setting:
+
+```bash
+JIRA_SITE=https://yourorg.atlassian.net
+JIRA_EMAIL=you@example.com
+JIRA_CLOUD_ID=00000000-0000-0000-0000-000000000000
+JIRA_API_TOKEN=ATATT3xFfGF0...
+```
+
+`init` resolves `JIRA_CLOUD_ID` for you from `<site>/_edge/tenant_info`, which needs no
+credentials. It matters more than it looks: requests go to
+`https://api.atlassian.com/ex/jira/<cloud-id>` rather than to your site host, because a
+Cloud org can carry an auth policy under which `<site>.atlassian.net` **ignores API-token
+credentials and answers as an anonymous user** — returning `200` with an empty result for
+a valid and an invalid token alike, instead of `401`. The gateway honors the token and
+fails loudly. Leave `JIRA_CLOUD_ID` blank (or omit it) for Data Center/Server, where the
+site host is the right base and there is no gateway.
+
+Profiles are created `600` in a `700` directory, so the token isn't readable by other
+users on the machine, and `profile show` reports only whether it is `(set)`, never its
+value. The file mode is the whole protection, though — keep `~/.config` out of a dotfiles
+repo or a synced folder if there's a token in it.
+
+`JIRA_API_TOKEN` in the environment overrides the profile for one invocation, for CI or a
+throwaway token:
+
+```bash
+JIRA_API_TOKEN=$OTHER_TOKEN gh pr-tools todo --long
+```
+
+With no token, links still render and the status column shows `-`.
+
 ### Jira ↔ PR matching
 
-Jira integration is optional (`JIRA_BASE_URL` blank → no links). When enabled, tickets must appear in the PR so the tools can connect them.
+Jira integration is optional (`JIRA_SITE` blank → no links). When enabled, tickets must appear in the PR so the tools can connect them.
+
+Profiles written before `JIRA_SITE` existed carry `JIRA_BASE_URL` (the `/browse` URL)
+instead. Each is derived from the other at load time, so an older profile keeps working
+as-is; re-run `init` only when you want ticket status too.
 
 | Goal                                                     | Requirement                                                                               |
 | -------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
@@ -164,6 +215,7 @@ Jira integration is optional (`JIRA_BASE_URL` blank → no links). When enabled,
 | Show a Jira link in `prd` output                         | Ticket key in the **branch name or title** (e.g. `feature/KF-1309-login` or `KF-1309: …`) |
 | Show a Jira link in `todo` output                        | Ticket key in the **branch name** (title alone is not enough for `todo`)                  |
 | Show a Jira link in `mine` output                        | Ticket key in the **branch name** (same convention as `todo`)                             |
+| Show a ticket's Jira **status**                          | Same as the link, plus a token — see [Jira token](#jira-token)                             |
 
 Ticket shape is `PREFIX-123`. If you set a Jira prefix at init (e.g. `KF`), only that prefix matches; leave it blank to accept any `PROJECT-123`-style key.
 
@@ -204,9 +256,9 @@ gh pr-tools -p work prd 886
 gh pr-tools todo [--long] [--short-links] [--watch[=INTERVAL]]
 ```
 
-Lists open PRs where you're an actual reviewer — currently requested, or you've left any review, including ones you've already approved. By default shows a compact table (title, linked PR URL, author, status, your review state, approvals, review threads, viewed-file progress, whether new changes landed since your review, and how long it's been in its current state); pass `--long` for all columns, adding last-updated, age, size, CI, merge status, and Jira link.
+Lists open PRs where you're an actual reviewer — currently requested, or you've left any review, including ones you've already approved. By default shows a compact table (title, linked PR URL, author, status, your review state, approvals, review threads, viewed-file progress, whether new changes landed since your review, how long it's been in its current state, and the Jira ticket with its status); pass `--long` for all columns, adding last-updated, age, size, CI, and merge status.
 
-The `PR` column is always an OSC 8 hyperlink. Pass `--short-links` (`-s`) to display its label as `#1154` instead of the full URL. WezTerm supports these links directly.
+The `PR` and `JIRA` columns are always OSC 8 hyperlinks, rendered in underlined cyan so a clickable cell is distinguishable from ordinary colored text — an OSC 8 target is invisible otherwise. Pass `--short-links` (`-s`) to display their labels as `#1154` and `KF-1309` instead of the full URLs — the links still work, and the two widest columns in the table collapse to a few characters. WezTerm supports these links directly.
 
 Pass `--watch` (`-w`) to refresh in place every 5 minutes until Ctrl-C, with the last successful update time shown above the table. Supply a positive integer with an optional `s`, `m`, or `h` suffix to change the interval, such as `--watch=30s`, `--watch 10m`, or `-w=1h`. This built-in mode preserves colors and hyperlinks, unlike `procps-ng watch`.
 
@@ -232,9 +284,9 @@ The `PENDING SINCE` column is color-graded by how long the PR has been in its cu
 gh pr-tools mine [--long] [--short-links] [--watch[=INTERVAL]]
 ```
 
-Lists your own open, non-draft PRs with the columns you need to triage them: title, linked PR URL, review status (Approved / Approved (stale) / Awaiting Approval), review threads, how long it's been pending (`PENDING SINCE`, same color grading as `todo`), number of approvals, CI status, and Jira link (same branch-name convention as `todo`). Pass `--long` to add age, size, and merge status.
+Lists your own open, non-draft PRs with the columns you need to triage them: title, linked PR URL, review status (Approved / Approved (stale) / Awaiting Approval), review threads, how long it's been pending (`PENDING SINCE`, same color grading as `todo`), number of approvals, CI status, and the Jira ticket with its status (same branch-name convention as `todo`). Pass `--long` to add age, size, and merge status.
 
-As with `todo`, `--short-links` (`-s`) shortens the linked `PR` cell from the full URL to `#1154`.
+As with `todo`, `--short-links` (`-s`) shortens the linked `PR` and `JIRA` cells from full URLs to `#1154` and `KF-1309`.
 
 `--watch` (`-w`) provides the same configurable refresh as `todo` and can be combined with any other flag.
 
@@ -247,6 +299,31 @@ The `THREADS` column counts review threads *reviewers* opened — a thread is at
 - **resolved** — marked resolved on GitHub; settled, shown in green.
 
 States with a count of zero are left out, so a PR you've fully worked through reads `4 (4 resolved)` and one you haven't touched yet reads `2 (2 pending)`. Shows `-` only when no reviewer has opened a thread (or when the lookup fails).
+
+`JIRA` and `JIRA STATUS` are separate columns: the ticket link, and the issue's current
+workflow status. Both appear in the default view of `todo` and `mine`.
+
+`JIRA STATUS` is colored by status **name**:
+
+| Status | Rendered |
+| ------ | -------- |
+| `Approved` | green |
+| `Review` | yellow |
+| anything else | gray |
+
+Jira's own `statusCategory` would be the portable choice — three values (`new`,
+`indeterminate`, `done`) that every workflow maps onto — but it cannot tell `Approved`
+from `Review`: both are `indeterminate`, and those are exactly the two states worth
+spotting at a glance. Matching is case-insensitive; adding another name is one more branch
+in `jiraStatusPaint`.
+
+The status is fetched for every listed ticket in **one** request, issued while the GitHub
+lookups are still in flight, so it costs no meaningful wall-clock time. It shows `-` when
+the branch carries no ticket key, when no token is configured, when the issue has been
+deleted or isn't visible to you, or when the lookup fails — none of which is worth a
+distinct cell. The link still renders in that last case, since the branch named a ticket
+either way. A **rejected token** is the one failure that also prints a line to stderr,
+since it stays broken until you re-run `init`, and Jira tokens expire within a year.
 
 ```bash
 gh pr-tools mine
