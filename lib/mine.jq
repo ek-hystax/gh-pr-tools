@@ -1,7 +1,7 @@
 include "common";
 
 # Inputs supplied by mine.sh: $threads, $teamLogins, $approvalThreshold,
-# $jiraBase, $jiraPattern, $long
+# $jiraBase, $jiraPattern, $long, $shortLinks
 
 def ci: ciState;
 def jira: jiraFromBranch($jiraBase; $jiraPattern);
@@ -38,13 +38,12 @@ def paintMerge:
 # reordering a column never requires renumbering anything else here).
 def cells:
   {
-    PR:         "#\(.number)",
+    PR:         (if $shortLinks then "#\(.number)" else .url end),
     TITLE:      .title[0:80],
     STATUS:     approvalDecision(._approvalStats; $approvalThreshold),
     THREADS:    threadsCell(threadsTheirs($threads)),
     APPROVALS:  approvalsCell(._approvalStats; $approvalThreshold),
     CI:         ci,
-    URL:        .url,
     JIRA:       jira,
     WAITING:    isoRel(.updatedAt),
     AGE:        isoRel(.createdAt),
@@ -55,7 +54,7 @@ def cells:
 def headers:
   {
     PR: "PR", TITLE: "TITLE", STATUS: "STATUS", THREADS: "THREADS",
-    APPROVALS: "APPROVALS", CI: "CI", URL: "URL", JIRA: "JIRA",
+    APPROVALS: "APPROVALS", CI: "CI", JIRA: "JIRA",
     WAITING: "PENDING SINCE", AGE: "AGE", SIZE: "SIZE", MERGE: "MERGE"
   };
 
@@ -65,13 +64,13 @@ def paint($col):
   if   $col == "PR" then green
   elif $col == "STATUS" then paintDecision
   elif $col == "CI" then paintCi
-  elif $col == "URL" or $col == "JIRA" or $col == "AGE" then dim
+  elif $col == "JIRA" or $col == "AGE" then dim
   elif $col == "MERGE" then paintMerge
   else . end;
 
 def cols:
-  if $long then ["PR", "TITLE", "STATUS", "THREADS", "WAITING", "APPROVALS", "CI", "URL", "JIRA", "AGE", "SIZE", "MERGE"]
-  else ["PR", "TITLE", "STATUS", "THREADS", "WAITING", "APPROVALS", "CI", "URL", "JIRA"]
+  if $long then ["TITLE", "PR", "STATUS", "THREADS", "WAITING", "APPROVALS", "CI", "JIRA", "AGE", "SIZE", "MERGE"]
+  else ["TITLE", "PR", "STATUS", "THREADS", "WAITING", "APPROVALS", "CI", "JIRA"]
   end;
 
 # Main
@@ -87,7 +86,9 @@ def cols:
   | $rows[$r] as $pr
   | $plain[$r] as $c
   | [ range(0; $c | length) as $i
-      | if $cols[$i] == "SIZE" then
+      | if $cols[$i] == "PR" then
+          ($c[$i] | green | hyperlink($pr.url)) + (" " * ($w[$i] - ($c[$i] | length)))
+        elif $cols[$i] == "SIZE" then
           ($pr | sizePaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "THREADS" then
           ($pr | threadsPaint(threadsTheirs($threads); threadsColors)) + (" " * ($w[$i] - ($c[$i] | length)))

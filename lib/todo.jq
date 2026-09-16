@@ -1,7 +1,7 @@
 include "common";
 
 # Inputs supplied by todo.sh: $me, $threads, $viewed, $teamMembers, $teamLogins,
-# $approvalThreshold, $jiraBase, $jiraPattern, $long
+# $approvalThreshold, $jiraBase, $jiraPattern, $long, $shortLinks
 
 def yn($b): if $b then "yes" else "-" end;
 
@@ -114,7 +114,7 @@ def paintMerge:
 # requires renumbering anything else in this file.
 def cells:
   {
-    PR:         "#\(.number)",
+    PR:         (if $shortLinks then "#\(.number)" else .url end),
     TITLE:      .title[0:80],
     AUTHOR:     .author.login,
     STATUS:     approvalDecision(._approvalStats; $approvalThreshold),
@@ -129,7 +129,6 @@ def cells:
     SIZE:       size,
     CI:         ciState,
     MERGE:      merge,
-    URL:        .url,
     JIRA:       jiraFromBranch($jiraBase; $jiraPattern)
   };
 
@@ -137,7 +136,7 @@ def headers:
   {
     PR: "PR", TITLE: "TITLE", AUTHOR: "AUTHOR", STATUS: "STATUS", APPROVALS: "APPROVALS", MINE: "MINE",
     THREADS: "THREADS", VIEWED: "VIEWED", WAITING: "PENDING SINCE", UPDATED: "UPDATED", AGE: "AGE", RE_REVIEW: "NEW CHANGES",
-    SIZE: "SIZE", CI: "CI", MERGE: "MERGE", URL: "URL", JIRA: "JIRA"
+    SIZE: "SIZE", CI: "CI", MERGE: "MERGE", JIRA: "JIRA"
   };
 
 # SIZE, THREADS, VIEWED, WAITING need the raw PR object, not cell text, so the
@@ -150,13 +149,13 @@ def paint($col):
   elif $col == "RE_REVIEW" then (if . == "yes" then yellow else dim end)
   elif $col == "CI" then paintCi
   elif $col == "MERGE" then paintMerge
-  elif $col == "UPDATED" or $col == "AGE" or $col == "URL" or $col == "JIRA" then dim
+  elif $col == "UPDATED" or $col == "AGE" or $col == "JIRA" then dim
   else . end;
 
 # THREADS and VIEWED sit right after MINE in both column sets, rather than at the end.
 def cols:
-  if $long then ["PR", "TITLE", "AUTHOR", "STATUS", "MINE", "APPROVALS", "THREADS", "VIEWED", "RE_REVIEW", "WAITING", "UPDATED", "CI", "URL", "JIRA", "AGE", "SIZE", "MERGE"]
-  else ["PR", "TITLE", "AUTHOR", "STATUS", "MINE", "APPROVALS", "THREADS", "VIEWED", "RE_REVIEW", "WAITING", "URL"]
+  if $long then ["TITLE", "PR", "AUTHOR", "STATUS", "MINE", "APPROVALS", "THREADS", "VIEWED", "RE_REVIEW", "WAITING", "UPDATED", "CI", "JIRA", "AGE", "SIZE", "MERGE"]
+  else ["TITLE", "PR", "AUTHOR", "STATUS", "MINE", "APPROVALS", "THREADS", "VIEWED", "RE_REVIEW", "WAITING"]
   end;
 
 # Main
@@ -172,7 +171,9 @@ def cols:
   | $rows[$r] as $pr
   | $plain[$r] as $c
   | [ range(0; $c | length) as $i
-      | if $cols[$i] == "SIZE" then
+      | if $cols[$i] == "PR" then
+          ($c[$i] | green | hyperlink($pr.url)) + (" " * ($w[$i] - ($c[$i] | length)))
+        elif $cols[$i] == "SIZE" then
           ($pr | sizePaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "THREADS" then
           ($pr | threadsPaint(threadsMine($threads); threadsColors)) + (" " * ($w[$i] - ($c[$i] | length)))

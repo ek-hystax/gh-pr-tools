@@ -14,6 +14,11 @@ def yellow: c("33");
 def red:    c("31");
 def boldRed: c("1;31");
 
+# OSC 8 explicit hyperlink: the input is the visible label and $url is the
+# hidden destination. Supported by WezTerm and other modern terminals.
+def hyperlink($url):
+  "\u001b]8;;\($url)\u001b\\\(.)\u001b]8;;\u001b\\";
+
 def relTime($ts):
   (now - $ts) as $d
   | if   $d < 45      then "just now"
