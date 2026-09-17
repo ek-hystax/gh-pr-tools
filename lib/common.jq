@@ -281,52 +281,85 @@ def threadsTruncated($map): ($map[.number | tostring].truncated // false);
 # Zero states are dropped so a settled PR reads "4 (4 resolved)" instead of
 # padding out every row with noise; since the three sum to total, a non-zero
 # total always leaves at least one segment.
-def threadSegments($stats):
-  [ {n: ($stats.pending  // 0), label: "pending"},
-    {n: ($stats.answered // 0), label: "answered"},
-    {n: ($stats.resolved // 0), label: "resolved"} ]
+#
+# Each segment carries its state name separately from the label it prints
+# under: the name is what threadColors is keyed by and never varies, while
+# --short-labels ($short) collapses the label to a single initial. Keeping
+# them apart is what lets the flag change the text without touching the
+# colors.
+def threadSegments($stats; $short):
+  [ {n: ($stats.pending  // 0), state: "pending",  label: (if $short then "P" else "pending"  end)},
+    {n: ($stats.answered // 0), state: "answered", label: (if $short then "A" else "answered" end)},
+    {n: ($stats.resolved // 0), state: "resolved", label: (if $short then "R" else "resolved" end)} ]
   | map(select(.n > 0));
 
-# "N (P pending, A answered, R resolved)" — N total threads in the bucket,
-# split into the three states (zero ones omitted). Plain-text form shared by
-# todo.jq/mine.jq; "-" when the bucket is empty.
+# One segment: "2 pending" long, "2P" short. The short form drops the space
+# too, so each count reads as one token — "2P 1A 3R" rather than a row of
+# loose numbers and letters.
+def threadSegmentText($seg; $short):
+  if $short then "\($seg.n)\($seg.label)" else "\($seg.n) \($seg.label)" end;
+
+# Separator between segments. Commas earn their place between words but not
+# between two-character tokens, where they would out-weigh what they separate.
+def threadSegmentSep($short): if $short then " " else ", " end;
+
+# "N (P pending, A answered, R resolved)", or "N (PP AA RR)" under
+# --short-labels — N total threads in the bucket, split into the three states
+# (zero ones omitted). Plain-text form shared by todo.jq/mine.jq; "-" when the
+# bucket is empty.
 # $truncated marks the PR as having threads past the fetched page: the total
 # then prints as "27+", so an undercount reads as obviously incomplete instead
 # of as a wrong number. A bucket can be empty and still truncated (the missing
 # threads may all be this login's), which is why that case prints "0+" rather
 # than the "-" a genuinely empty bucket gets.
-def threadsCell($stats; $truncated):
+def threadsCell($stats; $truncated; $short):
   ($stats.total // 0) as $t
   | if $t == 0 and ($truncated | not) then "-"
     elif $t == 0 then "0+"
     else "\($t)\(if $truncated then "+" else "" end) ("
-         + (threadSegments($stats) | map("\(.n) \(.label)") | join(", ")) + ")"
+         + ( threadSegments($stats; $short)
+             | map(threadSegmentText(.; $short))
+             | join(threadSegmentSep($short)) )
+         + ")"
     end;
 
 # Colors are named rather than passed as functions (jq has no first-class
-# functions) so each caller can pick its own emphasis per state. Only the
-# names the THREADS callers use are mapped; anything else falls back to dim.
+# functions) so the map below can live next to the states it keys off. Only
+# the names the THREADS callers use are mapped; anything else falls back to
+# dim.
 def paintByName($name):
-  if   $name == "yellow" then yellow
+  if   $name == "red"    then red
+  elif $name == "yellow" then yellow
   elif $name == "green"  then green
   else dim end;
 
-# Colored form of threadsCell, with $colors mapping each state's label to a
-# paintByName color — which state deserves emphasis differs by perspective
-# (see todo.jq/mine.jq). Because zero segments are omitted, a segment being
-# present already means it is non-zero, so the colors are unconditional.
-# Both forms are built from the same threadSegments list, which is what keeps
-# them emitting identical visible characters — required, since colWidths sizes
-# columns off the plain cell and callers pad by its length.
-def threadsPaint($stats; $colors; $truncated):
+# One state -> color map for every threads-style column, keyed by the
+# threadSegments state names. Which side an open thread is waiting on differs
+# between the THREADS column and the watched-login columns, but a reader
+# scanning one row across both should not have to re-learn what a color means,
+# so the states are painted the same everywhere. The three run a traffic
+# light, worst first: red pending (nobody has answered), yellow answered
+# (spoken for, not closed), green resolved (settled) — so a row reads by color
+# before it reads by number. The total stays cyan, outside that scale, since
+# it is a count rather than a state. This matters more under --short-labels,
+# where the color is doing more of the work than a bare "P" or "A" can.
+def threadColors: {pending: "red", answered: "yellow", resolved: "green"};
+
+# Colored form of threadsCell. Because zero segments are omitted, a segment
+# being present already means it is non-zero, so the colors are unconditional.
+# Both forms are built from the same threadSegments list and the same text and
+# separator helpers, which is what keeps them emitting identical visible
+# characters — required, since colWidths sizes columns off the plain cell and
+# callers pad by its length.
+def threadsPaint($stats; $truncated; $short):
   ($stats.total // 0) as $t
   | (if $truncated then ("+" | yellow) else "" end) as $more
   | if $t == 0 and ($truncated | not) then ("-" | dim)
     elif $t == 0 then ("0" | dim) + $more
     else
       ("\($t)" | cyan) + $more + (" (" | dim)
-      + ( threadSegments($stats)
-          | map(. as $s | "\($s.n) \($s.label)" | paintByName($colors[$s.label]))
-          | join(", " | dim) )
+      + ( threadSegments($stats; $short)
+          | map(. as $s | threadSegmentText($s; $short) | paintByName(threadColors[$s.state]))
+          | join(threadSegmentSep($short) | dim) )
       + (")" | dim)
     end;

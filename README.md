@@ -293,7 +293,7 @@ gh pr-tools -p work prd 886
 ### `todo` — PRs you're reviewing
 
 ```text
-gh pr-tools todo [--long] [--short-links] [--watch[=INTERVAL]]
+gh pr-tools todo [--long] [--short-links] [--short-labels] [--watch[=INTERVAL]]
 ```
 
 Lists open PRs where you're an actual reviewer — currently requested, or you've left any review, including ones you've already approved. By default shows a compact table (title, linked PR URL, author, status, your review state, approvals, review threads, viewed-file progress, whether new changes landed since your review, how long it's been in its current state, and the Jira ticket with its status); pass `--long` for all columns, adding last-updated, age, size, CI, and merge status.
@@ -305,14 +305,16 @@ Pass `--watch` (`-w`) to refresh in place every 5 minutes until Ctrl-C, with the
 The `THREADS` column counts review threads *you* opened — a thread is attributed to whoever left its opening comment, not every participant. It shows `N (P pending, A answered, R resolved)`, where `N` is every thread you started on the PR and the three states are disjoint and sum to `N`:
 
 - **pending** — still open with no reply from the PR author yet; the ball is in their court.
-- **answered** — still open, but the author's reply is the latest comment (e.g. "Fixed"). These are the ones worth going back to re-check, so this is the count that's highlighted.
-- **resolved** — marked resolved on GitHub; settled, shown in green.
+- **answered** — still open, but the author's reply is the latest comment (e.g. "Fixed"). These are the ones worth going back to re-check.
+- **resolved** — marked resolved on GitHub; settled.
 
-States with a count of zero are left out, so a fully settled PR reads `4 (4 resolved)` and a brand-new one reads `2 (2 pending)`. Shows `-` only when you opened no threads at all (or when the lookup fails).
+The three states run a traffic light, worst first: `pending` red, `answered` yellow, `resolved` green — so a row reads by color before it reads by number. The leading total stays cyan, outside that scale, since it's a count rather than a state. States with a count of zero are left out, so a fully settled PR reads `4 (4 resolved)` and a brand-new one reads `2 (2 pending)`. Shows `-` only when you opened no threads at all (or when the lookup fails).
+
+Pass `--short-labels` (`-S`) to collapse the state words to their initials — `6 (2 pending, 1 answered, 3 resolved)` becomes `6 (2P 1A 3R)`, and `-` / `0+` / the `+` truncation marker are unchanged. The column is only ever these three states and the colors carry the same meaning either way, so the letters stay readable once you know the shape; it's there for when the thread columns are wider than the rest of the table put together. Independent of `--short-links`, so you can shorten the URLs, the labels, or both.
 
 If [`THREAD_WATCH_USERS`](#watched-thread-authors-thread_watch_users) names any logins, each gets its own column right after `THREADS`, in the order configured, in both the default and `--long` views. The cells use the same `N (P pending, A answered, R resolved)` shape, counted over the threads that login opened. `todo`'s `THREADS` counts threads *you* opened, so nothing is subtracted from it here.
 
-The colors differ from `THREADS` on purpose: **both** open states are highlighted, because a watched account resolves its own thread once satisfied. An open thread the PR author has already replied to is still waiting on that account, so it is not a resting state. Only `resolved` goes quiet.
+The colors match `THREADS` exactly — the same red / yellow / green — so a single row reads the same way across both columns. Nothing about an open thread is settled: a watched account resolves its own thread once satisfied, so one the PR author has already replied to is still waiting on that account.
 
 A column is rendered even when every row is `-`, so the table keeps its shape between runs.
 
@@ -327,7 +329,7 @@ The `PENDING SINCE` column is color-graded by how long the PR has been in its cu
 ### `mine` — your own open PRs
 
 ```text
-gh pr-tools mine [--long] [--short-links] [--watch[=INTERVAL]]
+gh pr-tools mine [--long] [--short-links] [--short-labels] [--watch[=INTERVAL]]
 ```
 
 Lists your own open, non-draft PRs with the columns you need to triage them: title, linked PR URL, review status (Approved / Approved (stale) / Awaiting Approval), review threads, how long it's been pending (`PENDING SINCE`, same color grading as `todo`), number of approvals, CI status, and the Jira ticket with its status (same branch-name convention as `todo`). Pass `--long` to add age, size, and merge status.
@@ -340,15 +342,17 @@ As with `todo`, `--short-links` (`-s`) shortens the linked `PR` and `JIRA` cells
 
 The `THREADS` column counts review threads *reviewers* opened — a thread is attributed to whoever left its opening comment, not every participant. It shows `N (P pending, A answered, R resolved)`, where `N` is every thread reviewers started on the PR and the three states are disjoint and sum to `N`:
 
-- **pending** — still open and still waiting on your reply. This is the count that's highlighted, since it's the work left for you.
+- **pending** — still open and still waiting on your reply; the work left for you.
 - **answered** — still open, but your reply is the latest comment, so it's waiting on the reviewer next.
-- **resolved** — marked resolved on GitHub; settled, shown in green.
+- **resolved** — marked resolved on GitHub; settled.
 
-States with a count of zero are left out, so a PR you've fully worked through reads `4 (4 resolved)` and one you haven't touched yet reads `2 (2 pending)`. Shows `-` only when no reviewer has opened a thread (or when the lookup fails).
+The three states run a traffic light, worst first: `pending` red, `answered` yellow, `resolved` green. The leading total stays cyan. States with a count of zero are left out, so a PR you've fully worked through reads `4 (4 resolved)` and one you haven't touched yet reads `2 (2 pending)`. Shows `-` only when no reviewer has opened a thread (or when the lookup fails).
+
+`--short-labels` (`-S`) collapses the state words here too: `5 (1P 1A 3R)` instead of `5 (1 pending, 1 answered, 3 resolved)`.
 
 If [`THREAD_WATCH_USERS`](#watched-thread-authors-thread_watch_users) names any logins, each gets its own column right after `THREADS`, in the order configured, in both the default and `--long` views — and **their threads leave `THREADS`**, which therefore counts only reviewers you are not tracking separately. Watching your review bot is what makes `THREADS` mean "a human opened this".
 
-The colors differ from `THREADS`: both open states are highlighted, since a watched account resolves its own thread once satisfied, so an open thread you have already replied to is still waiting on it. Only `resolved` goes quiet. A column is rendered even when every row is `-`, so the table keeps its shape between runs.
+The colors match `THREADS` exactly — the same red / yellow / green — so a single row reads the same way across both columns. A watched account resolves its own thread once satisfied, so an open thread you have already replied to is still waiting on it. A column is rendered even when every row is `-`, so the table keeps its shape between runs.
 
 `JIRA` and `JIRA STATUS` are separate columns: the ticket link, and the issue's current
 workflow status. Both appear in the default view of `todo` and `mine`.
@@ -379,6 +383,7 @@ since it stays broken until you re-run `init`, and Jira tokens expire within a y
 gh pr-tools mine
 gh pr-tools mine --long
 gh pr-tools mine --short-links
+gh pr-tools mine --short-links --short-labels
 gh pr-tools mine --short-links --watch
 gh pr-tools -p work mine
 ```

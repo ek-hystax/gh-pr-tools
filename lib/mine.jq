@@ -1,7 +1,7 @@
 include "common";
 
 # Inputs supplied by mine.sh: $threads, $teamLogins, $approvalThreshold,
-# $jiraBase, $jiraPattern, $jiraStatuses, $long, $shortLinks
+# $jiraBase, $jiraPattern, $jiraStatuses, $long, $shortLinks, $shortLabels
 
 def ci: ciState;
 def jiraKey: jiraKeyFromBranch($jiraPattern);
@@ -17,17 +17,13 @@ def sizePaint:
   + " +\(.additions // 0 | tostring | green)"
   + "/\("-" + (.deletions // 0 | tostring) | red)";
 
-# Only threads reviewers opened (theirs bucket) — the ones waiting on me.
-# "Pending" is what still needs my reply, so that's the state worth
-# highlighting; "answered" (I've replied) is waiting on the reviewer next, and
-# "resolved" is settled.
-def threadsColors: {pending: "yellow", answered: "dim", resolved: "green"};
-
-# Watched-login columns. $watchUsers arrives as [{display, key}] in configured
-# order (see thread_watch_users in common.sh); the column key is prefixed so a
-# login can never collide with a built-in column name, and $display carries the
-# login in the case it was configured with, since uppercasing headers the way
-# the built-in ones do would mangle a mixed-case login.
+# Watched-login columns. THREADS counts only the threads reviewers opened
+# (theirs bucket); each watched column counts the threads that login opened.
+# $watchUsers arrives as [{display, key}] in configured order (see
+# thread_watch_users in common.sh); the column key is prefixed so a login can
+# never collide with a built-in column name, and $display carries the login in
+# the case it was configured with, since uppercasing headers the way the
+# built-in ones do would mangle a mixed-case login.
 def watchCol($u): "WATCH:\($u.key)";
 def watchCols: [$watchUsers[] | watchCol(.)];
 def watchHeaders: reduce $watchUsers[] as $u ({}; .[watchCol($u)] = $u.display);
@@ -36,13 +32,7 @@ def watchCells:
   . as $pr
   | ($pr | threadsTruncated($threads)) as $trunc
   | reduce $watchUsers[] as $u ({};
-      .[watchCol($u)] = ($pr | threadsCell(threadsWatched($threads; $u.key); $trunc)));
-
-# Unlike THREADS, "answered" is not a resting state here: a watched account
-# resolves its own thread once it is satisfied, so an open thread the PR author
-# has already replied to is still waiting on that account and still wants a
-# look. Only "resolved" means settled, so only "resolved" goes quiet.
-def watchColors: {pending: "yellow", answered: "yellow", resolved: "green"};
+      .[watchCol($u)] = ($pr | threadsCell(threadsWatched($threads; $u.key); $trunc; $shortLabels)));
 
 def merge:
   if .mergeable == "CONFLICTING" then "conflict"
@@ -63,7 +53,7 @@ def cells:
     PR:         (if $shortLinks then "#\(.number)" else .url end),
     TITLE:      .title[0:80],
     STATUS:     approvalDecision(._approvalStats; $approvalThreshold),
-    THREADS:    threadsCell(threadsTheirs($threads); threadsTruncated($threads)),
+    THREADS:    threadsCell(threadsTheirs($threads); threadsTruncated($threads); $shortLabels),
     APPROVALS:  approvalsCell(._approvalStats; $approvalThreshold),
     CI:         ci,
     JIRA:       jira,
@@ -120,9 +110,9 @@ def cols:
         elif $cols[$i] == "SIZE" then
           ($pr | sizePaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "THREADS" then
-          ($pr | threadsPaint(threadsTheirs($threads); threadsColors; threadsTruncated($threads))) + (" " * ($w[$i] - ($c[$i] | length)))
+          ($pr | threadsPaint(threadsTheirs($threads); threadsTruncated($threads); $shortLabels)) + (" " * ($w[$i] - ($c[$i] | length)))
         elif ($cols[$i] | startswith("WATCH:")) then
-          ($pr | threadsPaint(threadsWatched($threads; $cols[$i] | ltrimstr("WATCH:")); watchColors; threadsTruncated($threads))) + (" " * ($w[$i] - ($c[$i] | length)))
+          ($pr | threadsPaint(threadsWatched($threads; $cols[$i] | ltrimstr("WATCH:")); threadsTruncated($threads); $shortLabels)) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "WAITING" then
           ($pr | waitingPaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "JIRA" then

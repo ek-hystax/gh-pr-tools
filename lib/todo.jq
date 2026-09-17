@@ -1,7 +1,8 @@
 include "common";
 
 # Inputs supplied by todo.sh: $me, $threads, $viewed, $teamMembers, $teamLogins,
-# $approvalThreshold, $jiraBase, $jiraPattern, $jiraStatuses, $long, $shortLinks
+# $approvalThreshold, $jiraBase, $jiraPattern, $jiraStatuses, $long, $shortLinks,
+# $shortLabels
 
 def yn($b): if $b then "yes" else "-" end;
 
@@ -69,13 +70,9 @@ def sizePaint:
   + " +\(.additions // 0 | tostring | green)"
   + "/\("-" + (.deletions // 0 | tostring) | red)";
 
-# Only threads I opened (mine bucket) — the ones I'm waiting on the owner
-# for. "Answered" (owner replied, thread still open) is what needs my
-# attention next, so it's the state worth highlighting; "pending" is still on
-# the owner and needs nothing from me, and "resolved" is settled.
-def threadsColors: {pending: "dim", answered: "yellow", resolved: "green"};
-
-# Watched-login columns. $watchUsers arrives as [{display, key}] in configured
+# Watched-login columns. THREADS counts only the threads I opened (mine
+# bucket); each watched column counts the threads that login opened, so the
+# two never overlap. $watchUsers arrives as [{display, key}] in configured
 # order (see thread_watch_users in common.sh); the column key is prefixed so a
 # login can never collide with a built-in column name, and $display carries the
 # login in the case it was configured with, since uppercasing headers the way
@@ -88,13 +85,7 @@ def watchCells:
   . as $pr
   | ($pr | threadsTruncated($threads)) as $trunc
   | reduce $watchUsers[] as $u ({};
-      .[watchCol($u)] = ($pr | threadsCell(threadsWatched($threads; $u.key); $trunc)));
-
-# Unlike THREADS, "answered" is not a resting state here: a watched account
-# resolves its own thread once it is satisfied, so an open thread the PR author
-# has already replied to is still waiting on that account and still wants a
-# look. Only "resolved" means settled, so only "resolved" goes quiet.
-def watchColors: {pending: "yellow", answered: "yellow", resolved: "green"};
+      .[watchCol($u)] = ($pr | threadsCell(threadsWatched($threads; $u.key); $trunc; $shortLabels)));
 
 def viewedCell:
   ($viewed[.number | tostring] // null) as $v
@@ -141,7 +132,7 @@ def cells:
     STATUS:     approvalDecision(._approvalStats; $approvalThreshold),
     APPROVALS:  approvalsCell(._approvalStats; $approvalThreshold),
     MINE:       mineState,
-    THREADS:    threadsCell(threadsMine($threads); threadsTruncated($threads)),
+    THREADS:    threadsCell(threadsMine($threads); threadsTruncated($threads); $shortLabels),
     VIEWED:     viewedCell,
     WAITING:    isoRel(waitingSince),
     UPDATED:    isoRel(.updatedAt),
@@ -205,9 +196,9 @@ def cols:
         elif $cols[$i] == "SIZE" then
           ($pr | sizePaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "THREADS" then
-          ($pr | threadsPaint(threadsMine($threads); threadsColors; threadsTruncated($threads))) + (" " * ($w[$i] - ($c[$i] | length)))
+          ($pr | threadsPaint(threadsMine($threads); threadsTruncated($threads); $shortLabels)) + (" " * ($w[$i] - ($c[$i] | length)))
         elif ($cols[$i] | startswith("WATCH:")) then
-          ($pr | threadsPaint(threadsWatched($threads; $cols[$i] | ltrimstr("WATCH:")); watchColors; threadsTruncated($threads))) + (" " * ($w[$i] - ($c[$i] | length)))
+          ($pr | threadsPaint(threadsWatched($threads; $cols[$i] | ltrimstr("WATCH:")); threadsTruncated($threads); $shortLabels)) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "VIEWED" then
           ($pr | viewedPaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "WAITING" then

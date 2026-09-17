@@ -7,6 +7,7 @@ source "$dir/common.sh"
 
 long=false
 short_links=false
+short_labels=false
 watch=false
 watch_interval=5m
 command_args=()
@@ -14,6 +15,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --long|-l) long=true; command_args+=("$1"); shift ;;
     --short-links|-s) short_links=true; command_args+=("$1"); shift ;;
+    --short-labels|-S) short_labels=true; command_args+=("$1"); shift ;;
     --watch|-w)
       watch=true
       if [ $# -gt 1 ] && [[ "$2" != -* ]]; then watch_interval="$2"; shift 2
@@ -21,7 +23,7 @@ while [ $# -gt 0 ]; do
       fi
       ;;
     --watch=*|-w=*) watch=true; watch_interval="${1#*=}"; shift ;;
-    *) echo "gh pr-tools todo: unknown option '$1' (supported: --long, --short-links, --watch[=INTERVAL])" >&2; exit 1 ;;
+    *) echo "gh pr-tools todo: unknown option '$1' (supported: --long, --short-links, --short-labels, --watch[=INTERVAL])" >&2; exit 1 ;;
   esac
 done
 
@@ -169,4 +171,5 @@ jq -rn -L "$dir" \
   --arg jiraPattern "$ticket_pattern" \
   --argjson long "$long" \
   --argjson shortLinks "$short_links" \
+  --argjson shortLabels "$short_labels" \
   -f "$dir/todo.jq" <<<"$prs"
