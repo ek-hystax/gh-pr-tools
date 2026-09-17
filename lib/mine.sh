@@ -88,12 +88,14 @@ keys=$(jq -L "$dir" -c --arg jiraPattern "$ticket_pattern" \
 fetch_jira_statuses "$keys" > "$tmp/jira" &
 jira_pid=$!
 
-threads=$(fetch_pr_review_state "$prs" "$me" threads | jq '.threads')
+watch_users=$(thread_watch_users)
+threads=$(fetch_pr_review_state "$prs" "$me" threads "$watch_users" | jq '.threads')
 wait "$jira_pid"
 jira_statuses=$(cat "$tmp/jira")
 
 jq -rn -L "$dir" \
   --argjson threads "$threads" \
+  --argjson watchUsers "$watch_users" \
   --argjson jiraStatuses "$jira_statuses" \
   --argjson teamLogins "$my_logins" \
   --argjson approvalThreshold "${APPROVAL_THRESHOLD:-1}" \

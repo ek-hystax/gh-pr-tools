@@ -60,6 +60,7 @@ gh pr-tools init
 | **Jira account email**   | Only asked when a site is set. The Atlassian account an API token belongs to — leave blank for links without ticket status |
 | **Jira API token**       | Only asked when an email is set. Input is hidden. Buys the ticket-status lookup; leave blank for links only. See [Jira token](#jira-token) |
 | **approval threshold**   | How many approvals *you* personally require to call a PR "Approved" in `mine`/`prd` — defaults to `1`. Independent of GitHub's own branch-protection rule, so teams that want stricter review (e.g. 2 approvals) can set it without changing repo settings. |
+| **watched thread authors** | Comma-separated logins (e.g. `coderabbitai`) whose review threads get a column of their own in `todo`/`mine`, and out of `mine`'s `THREADS` count — leave blank for none. See [Watched thread authors](#watched-thread-authors-thread_watch_users) |
 
 Settings go to `~/.config/gh-pr-tools/profiles/<name>.sh`. Re-run `gh pr-tools init` anytime to add another profile or overwrite an existing one.
 
@@ -153,6 +154,40 @@ GH_PR_TOOLS_TEAM_CACHE=24h
 ```
 
 An environment value beats the profile. An unparseable value (`60`, `1hour`) is reported on stderr and ignored in favour of `1h`.
+
+### Watched thread authors (`THREAD_WATCH_USERS`)
+
+A review bot can drown out everything else. If CodeRabbit opens 40 threads on a
+PR and a human opens two, `mine`'s `THREADS` column reads `42` and the two that
+came from a person are invisible.
+
+Name the logins you want split out, and each gets its own column in `todo` and
+`mine`, headed with the login itself:
+
+```bash
+THREAD_WATCH_USERS=coderabbitai
+THREAD_WATCH_USERS=coderabbitai,sonarcloud
+```
+
+`gh pr-tools init` prompts for this; blank means no extra columns and nothing
+changes. To add it to a profile you already have, either re-run `init` or put
+the line in `~/.config/gh-pr-tools/profiles/<name>.sh` by hand.
+
+Their threads are **subtracted** from `THREADS`, so the columns partition the
+PR's threads rather than double-counting them — in `mine`, `THREADS` then means
+"threads a human reviewer opened", which is the number you actually wanted.
+
+Matching is case-insensitive, and a trailing `[bot]` is stripped, so
+`coderabbitai` and `coderabbitai[bot]` both work. The bare form is what GitHub's
+GraphQL API reports; the `[bot]` form is what its web UI and REST API show.
+
+Nothing is validated. A login that never opened a thread and a login that
+doesn't exist both render an empty column, so check your spelling if a column
+stays `-` forever. An environment value overrides the profile for one run:
+
+```bash
+GH_PR_TOOLS_THREAD_WATCH_USERS=coderabbitai gh pr-tools mine
+```
 
 ### Jira token
 
@@ -270,6 +305,12 @@ The `THREADS` column counts review threads *you* opened — a thread is attribut
 
 States with a count of zero are left out, so a fully settled PR reads `4 (4 resolved)` and a brand-new one reads `2 (2 pending)`. Shows `-` only when you opened no threads at all (or when the lookup fails).
 
+If [`THREAD_WATCH_USERS`](#watched-thread-authors-thread_watch_users) names any logins, each gets its own column right after `THREADS`, in the order configured, in both the default and `--long` views. The cells use the same `N (P pending, A answered, R resolved)` shape, counted over the threads that login opened. `todo`'s `THREADS` counts threads *you* opened, so nothing is subtracted from it here.
+
+The colors differ from `THREADS` on purpose: **both** open states are highlighted, because a watched account resolves its own thread once satisfied. An open thread the PR author has already replied to is still waiting on that account, so it is not a resting state. Only `resolved` goes quiet.
+
+A column is rendered even when every row is `-`, so the table keeps its shape between runs.
+
 `VIEWED` shows `N/T`: how many files GitHub says the current viewer marked as viewed out of the first 100 PR files returned by GraphQL. Shows `-` if the viewed-file lookup fails.
 
 `STATUS` and `APPROVALS` use the same threshold-based logic as `mine` (see below) rather than GitHub's `reviewDecision`: "Approved" once distinct approvals meet your profile's approval threshold, "Approved (stale)" if the threshold is only met by counting approvers whose approval is against an older commit, otherwise "Awaiting Approval" — this column doesn't distinguish an outright changes-requested review from one nobody has looked at yet. `APPROVALS` shows `total (team)` — total distinct approvers, and in parens how many are members of a team you belong to.
@@ -299,6 +340,10 @@ The `THREADS` column counts review threads *reviewers* opened — a thread is at
 - **resolved** — marked resolved on GitHub; settled, shown in green.
 
 States with a count of zero are left out, so a PR you've fully worked through reads `4 (4 resolved)` and one you haven't touched yet reads `2 (2 pending)`. Shows `-` only when no reviewer has opened a thread (or when the lookup fails).
+
+If [`THREAD_WATCH_USERS`](#watched-thread-authors-thread_watch_users) names any logins, each gets its own column right after `THREADS`, in the order configured, in both the default and `--long` views — and **their threads leave `THREADS`**, which therefore counts only reviewers you are not tracking separately. Watching your review bot is what makes `THREADS` mean "a human opened this".
+
+The colors differ from `THREADS`: both open states are highlighted, since a watched account resolves its own thread once satisfied, so an open thread you have already replied to is still waiting on it. Only `resolved` goes quiet. A column is rendered even when every row is `-`, so the table keeps its shape between runs.
 
 `JIRA` and `JIRA STATUS` are separate columns: the ticket link, and the issue's current
 workflow status. Both appear in the default view of `todo` and `mine`.
@@ -333,7 +378,7 @@ gh pr-tools mine --short-links --watch
 gh pr-tools -p work mine
 ```
 
-Review-thread stats aren't exposed by GitHub's `--json` convenience fields, so both `mine` and `todo` make one extra GraphQL call to fetch them — a single batched request covering every listed PR at once, not one call per PR, so it stays fast regardless of how many PRs you have open. That request takes the first 100 threads per PR, resolved ones included, so a PR with a very long resolved history can undercount.
+Review-thread stats aren't exposed by GitHub's `--json` convenience fields, so both `mine` and `todo` make one extra GraphQL call to fetch them — a single batched request covering every listed PR at once, not one call per PR, so it stays fast regardless of how many PRs you have open. That request takes the first 100 threads per PR, resolved ones included, so a PR with more threads than that can undercount. When it happens the totals are suffixed with `+` — `27+ (3 pending, 24 resolved)` — so an incomplete count reads as incomplete rather than as a wrong number. A bucket can be empty and still truncated, which prints `0+` rather than `-`.
 
 Both commands also only request the PR fields their current column set needs — size, CI, merge status, age, and Jira link all cost an extra per-PR lookup under the hood, so `--long` fetches noticeably more data than the default view.
 

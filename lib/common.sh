@@ -257,6 +257,13 @@ load_config() {
   # environment JIRA_API_TOKEN is captured before the source and restored
   # here — same precedence rule (and same reason) as GH_PR_TOOLS_TEAM_CACHE.
   [ -n "$env_token" ] && JIRA_API_TOKEN="$env_token"
+  # Unlike the two overrides above, the environment name differs from the
+  # profile key, so sourcing the profile cannot clobber it and there is
+  # nothing to capture beforehand — reading it after the source is enough.
+  # Bare - rather than :- so that an explicitly empty environment value wins:
+  # unlike a cache TTL or a token, "" is a meaningful setting here (watch
+  # nobody), and it is the obvious way to switch the columns off for one run.
+  THREAD_WATCH_USERS="${GH_PR_TOOLS_THREAD_WATCH_USERS-${THREAD_WATCH_USERS-}}"
   normalize_jira_config
   # Resolved here rather than when this file is sourced, so a profile can set
   # GH_PR_TOOLS_TEAM_CACHE like every other setting; an environment value
@@ -437,6 +444,29 @@ fetch_closed_prs_with_branch_status() {
     '{prs: $prs, truncated: $truncated}'
 }
 
+# THREAD_WATCH_USERS is a comma-separated list of GitHub logins whose review
+# threads get a column of their own in todo/mine. Prints a JSON array of
+# {display, key} objects: `display` is the login exactly as configured (minus
+# any "[bot]" suffix) and is what the column header shows; `key` is its
+# lowercased form, which thread authors are matched against.
+#
+# The suffix is stripped because the same app account has two spellings —
+# GraphQL reports CodeRabbit as `coderabbitai`, while REST and the web UI show
+# `coderabbitai[bot]`. Threads come from GraphQL, so a literal `[bot]` value
+# would never match anything; accepting both spellings avoids a config that
+# silently produces an empty column forever.
+#
+# Order is the order configured (columns follow it), so duplicates are dropped
+# by hand rather than with unique_by, which would sort.
+thread_watch_users() {
+  jq -cn --arg raw "${THREAD_WATCH_USERS:-}" '
+    $raw
+    | split(",")
+    | map(gsub("^\\s+|\\s+$"; "") | sub("\\s*\\[bot\\]$"; ""; "i"))
+    | map(select(length > 0) | {display: ., key: ascii_downcase})
+    | reduce .[] as $u ([]; if any(.[]; .key == $u.key) then . else . + [$u] end)'
+}
+
 # Review-thread stats and viewed-file stats aren't exposed by `gh pr
 # list`/`pr view --json` (no reviewThreads/files fields), so fetch via
 # GraphQL. Both are per-PR lookups, so they share one batched query (one
@@ -453,19 +483,27 @@ fetch_closed_prs_with_branch_status() {
 #   pending  — still open with no reply from the owner yet
 # Note reviewThreads(first:100) is unpaginated (100 is GraphQL's per-page
 # max), and that cap now covers resolved threads too — a PR with a very long
-# resolved history can therefore undercount.
+# resolved history can therefore undercount. pageInfo.hasNextPage rides along
+# as "truncated" so the undercount is visible rather than silent: threadsCell
+# in common.jq suffixes such totals with "+".
 #
 # Args: $1 = JSON array of PRs (needs .number and .author.login), $2 = login
 # to attribute as "mine", $3 = "threads" to skip the viewed-file half (the
 # fallback below is all-or-nothing, so a caller with no VIEWED column
 # shouldn't pay for that selection — or risk losing its thread stats to an
-# error in data it never renders). Default: both.
-# Prints: {threads: {"<number>": {"mine":   {"total": N, "pending": P, "answered": A, "resolved": R},
-#                                 "theirs": {"total": M, "pending": Q, "answered": B, "resolved": S}}},
+# error in data it never renders). Default: both. $4 = the watched-login array
+# from thread_watch_users (default []); those logins each get a bucket of their
+# own and are taken out of "theirs".
+# Prints: {threads: {"<number>": {"mine":      {"total": N, "pending": P, "answered": A, "resolved": R},
+#                                 "theirs":    {"total": M, "pending": Q, "answered": B, "resolved": S},
+#                                 "watched":   {"<key>": {"total": ..., ...}},
+#                                 "truncated": <bool>}},
 #          viewed:  {"<number>": {"viewed": N, "total": M}}}
-# With $3 = "threads", .viewed is an empty map.
+# With $3 = "threads", .viewed is an empty map. On a failed lookup the whole
+# result collapses to {threads: {}, viewed: {}} — the accessors in common.jq
+# read through the missing keys, so no caller needs to special-case it.
 fetch_pr_review_state() {
-  local prs="$1" me="$2" want="${3:-all}" owner repo_name numbers number query result
+  local prs="$1" me="$2" want="${3:-all}" watch_users="${4:-[]}" owner repo_name numbers number query result
   local empty='{"threads":{},"viewed":{}}' files_sel="" want_viewed=true
   if [ "$want" = "threads" ]; then
     want_viewed=false
@@ -479,14 +517,15 @@ fetch_pr_review_state() {
 
   query="query(\$owner:String!,\$repo:String!){repository(owner:\$owner,name:\$repo){"
   while IFS= read -r number; do
-    query+="pr${number}:pullRequest(number:${number}){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}}} lastComments: comments(last:1){nodes{author{login}}}}} ${files_sel}} "
+    query+="pr${number}:pullRequest(number:${number}){reviewThreads(first:100){pageInfo{hasNextPage} nodes{isResolved comments(first:1){nodes{author{login}}} lastComments: comments(last:1){nodes{author{login}}}}} ${files_sel}} "
   done <<<"$numbers"
   query+="}}"
 
   # A failed/rate-limited lookup must not abort the whole command — fall back
   # to empty maps (every PR renders "-") and keep going.
   result=$(gh api graphql -f query="$query" -f owner="$owner" -f repo="$repo_name" 2>/dev/null \
-    | jq --arg me "$me" --argjson prs "$prs" --argjson wantViewed "$want_viewed" '
+    | jq --arg me "$me" --argjson prs "$prs" --argjson wantViewed "$want_viewed" \
+         --argjson watch "$watch_users" '
         # Input is the thread list for one bucket; $owner is the login of the
         # PR author, whose reply is what makes an open thread "answered".
         def bucketStats($owner):
@@ -498,7 +537,18 @@ fetch_pr_review_state() {
               answered: $answered,
               resolved: $resolved };
 
-        (reduce $prs[] as $pr ({}; .[$pr.number | tostring] = $pr.author.login)) as $owners
+        # A thread belongs to whoever opened it. Matched case-insensitively so
+        # a profile spelling like "CodeRabbitAI" still lines up with the login
+        # GraphQL reports.
+        def openerKey: ((.comments.nodes[0].author.login // "") | ascii_downcase);
+
+        # Watched logins are taken out of "theirs" so the watched columns and
+        # THREADS partition the threads rather than double-counting them. Only
+        # "theirs" ever loses threads this way — "mine" is what todo displays
+        # and it is defined by author, so watching your own login duplicates
+        # that column rather than cannibalizing it, with no special case here.
+        ($watch | map(.key)) as $subtractKeys
+        | (reduce $prs[] as $pr ({}; .[$pr.number | tostring] = $pr.author.login)) as $owners
         | .data.repository
         | to_entries
         | map(select(.value != null) | .num = (.key | ltrimstr("pr")))
@@ -508,7 +558,16 @@ fetch_pr_review_state() {
                 ($owners[.num] // "") as $owner
                 | [.value.reviewThreads.nodes[]?] as $threads
                 | { mine:   ($threads | map(select(.comments.nodes[0].author.login == $me)) | bucketStats($owner)),
-                    theirs: ($threads | map(select(.comments.nodes[0].author.login != $me)) | bucketStats($owner)) }
+                    theirs: ($threads
+                             | map(. as $t | ($t | openerKey) as $k
+                                   | select($t.comments.nodes[0].author.login != $me
+                                            and ($subtractKeys | index($k)) == null))
+                             | bucketStats($owner)),
+                    watched: (reduce $watch[] as $u ({};
+                                .[$u.key] = ($threads
+                                             | map(select(openerKey == $u.key))
+                                             | bucketStats($owner)))),
+                    truncated: (.value.reviewThreads.pageInfo.hasNextPage // false) }
               )
             }) | from_entries),
             viewed: (if $wantViewed then (map({

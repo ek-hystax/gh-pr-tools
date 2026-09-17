@@ -57,6 +57,7 @@ case "$cmd" in
     # Presence only — printing the token would defeat the file mode.
     echo "JIRA_API_TOKEN=$([ -n "${JIRA_API_TOKEN:-}" ] && echo '(set)' || echo '(not set)')"
     echo "APPROVAL_THRESHOLD=${APPROVAL_THRESHOLD:-1}"
+    echo "THREAD_WATCH_USERS=${THREAD_WATCH_USERS:-}"
     ;;
   remove)
     name="${1:?usage: gh pr-tools profile remove <name>}"

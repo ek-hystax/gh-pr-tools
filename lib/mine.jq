@@ -23,6 +23,27 @@ def sizePaint:
 # "resolved" is settled.
 def threadsColors: {pending: "yellow", answered: "dim", resolved: "green"};
 
+# Watched-login columns. $watchUsers arrives as [{display, key}] in configured
+# order (see thread_watch_users in common.sh); the column key is prefixed so a
+# login can never collide with a built-in column name, and $display carries the
+# login in the case it was configured with, since uppercasing headers the way
+# the built-in ones do would mangle a mixed-case login.
+def watchCol($u): "WATCH:\($u.key)";
+def watchCols: [$watchUsers[] | watchCol(.)];
+def watchHeaders: reduce $watchUsers[] as $u ({}; .[watchCol($u)] = $u.display);
+
+def watchCells:
+  . as $pr
+  | ($pr | threadsTruncated($threads)) as $trunc
+  | reduce $watchUsers[] as $u ({};
+      .[watchCol($u)] = ($pr | threadsCell(threadsWatched($threads; $u.key); $trunc)));
+
+# Unlike THREADS, "answered" is not a resting state here: a watched account
+# resolves its own thread once it is satisfied, so an open thread the PR author
+# has already replied to is still waiting on that account and still wants a
+# look. Only "resolved" means settled, so only "resolved" goes quiet.
+def watchColors: {pending: "yellow", answered: "yellow", resolved: "green"};
+
 def merge:
   if .mergeable == "CONFLICTING" then "conflict"
   else (.mergeStateStatus // "-" | ascii_downcase)
@@ -42,7 +63,7 @@ def cells:
     PR:         (if $shortLinks then "#\(.number)" else .url end),
     TITLE:      .title[0:80],
     STATUS:     approvalDecision(._approvalStats; $approvalThreshold),
-    THREADS:    threadsCell(threadsTheirs($threads)),
+    THREADS:    threadsCell(threadsTheirs($threads); threadsTruncated($threads)),
     APPROVALS:  approvalsCell(._approvalStats; $approvalThreshold),
     CI:         ci,
     JIRA:       jira,
@@ -51,14 +72,14 @@ def cells:
     AGE:        isoRel(.createdAt),
     SIZE:       size,
     MERGE:      merge
-  };
+  } + watchCells;
 
 def headers:
   {
     PR: "PR", TITLE: "TITLE", STATUS: "STATUS", THREADS: "THREADS",
     APPROVALS: "APPROVALS", CI: "CI", JIRA: "JIRA", JIRA_STATUS: "JIRA STATUS",
     WAITING: "PENDING SINCE", AGE: "AGE", SIZE: "SIZE", MERGE: "MERGE"
-  };
+  } + watchHeaders;
 
 # SIZE, THREADS, WAITING and JIRA_STATUS need the raw PR object, not cell
 # text, so the render loop special-cases them instead of routing through
@@ -71,10 +92,15 @@ def paint($col):
   elif $col == "MERGE" then paintMerge
   else . end;
 
+# Watched-login columns are spliced in directly after THREADS, in configured
+# order, and appear in both column sets — always rendered, even when every row
+# is "-", so the table keeps the same shape between runs.
 def cols:
-  if $long then ["TITLE", "PR", "STATUS", "THREADS", "WAITING", "APPROVALS", "CI", "JIRA", "JIRA_STATUS", "AGE", "SIZE", "MERGE"]
-  else ["TITLE", "PR", "STATUS", "THREADS", "WAITING", "APPROVALS", "CI", "JIRA", "JIRA_STATUS"]
-  end;
+  (if $long then ["TITLE", "PR", "STATUS", "THREADS", "WAITING", "APPROVALS", "CI", "JIRA", "JIRA_STATUS", "AGE", "SIZE", "MERGE"]
+   else ["TITLE", "PR", "STATUS", "THREADS", "WAITING", "APPROVALS", "CI", "JIRA", "JIRA_STATUS"]
+   end) as $base
+  | ($base | index("THREADS")) as $i
+  | $base[0:$i + 1] + watchCols + $base[$i + 1:];
 
 # Main
 [inputs][0]
@@ -94,7 +120,9 @@ def cols:
         elif $cols[$i] == "SIZE" then
           ($pr | sizePaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "THREADS" then
-          ($pr | threadsPaint(threadsTheirs($threads); threadsColors)) + (" " * ($w[$i] - ($c[$i] | length)))
+          ($pr | threadsPaint(threadsTheirs($threads); threadsColors; threadsTruncated($threads))) + (" " * ($w[$i] - ($c[$i] | length)))
+        elif ($cols[$i] | startswith("WATCH:")) then
+          ($pr | threadsPaint(threadsWatched($threads; $cols[$i] | ltrimstr("WATCH:")); watchColors; threadsTruncated($threads))) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "WAITING" then
           ($pr | waitingPaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "JIRA" then

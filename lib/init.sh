@@ -92,6 +92,16 @@ if ! [[ "$threshold" =~ ^[0-9]+$ ]] || [ "$threshold" -lt 1 ]; then
   exit 1
 fi
 
+# Nothing here is validated against GitHub: a login that never opened a thread
+# and a login that does not exist both render an empty column, and a network
+# check on every init is a poor trade for telling those two apart. A "[bot]"
+# suffix is accepted and stripped at read time, since that is the spelling
+# GitHub's UI shows even though the API this uses reports the bare login.
+echo
+echo "Optional: logins whose review threads get their own todo/mine column,"
+echo "e.g. coderabbitai — their threads then stop inflating the THREADS column."
+read -rp "Watch review threads by (comma-separated logins, blank = none): " watch_users
+
 path=$(profile_path "$name")
 # The profile can hold an API token, so create it unreadable to anyone else
 # from the start rather than chmod-ing after the write — the file mode is the
@@ -108,6 +118,7 @@ path=$(profile_path "$name")
     [ -n "$jira_cloud_id" ] && printf 'JIRA_CLOUD_ID=%q\n' "$jira_cloud_id"
     [ -n "$jira_api_token" ] && printf 'JIRA_API_TOKEN=%q\n' "$jira_api_token"
     printf 'APPROVAL_THRESHOLD=%q\n' "$threshold"
+    printf 'THREAD_WATCH_USERS=%q\n' "$watch_users"
   } > "$path"
 )
 chmod 600 "$path"

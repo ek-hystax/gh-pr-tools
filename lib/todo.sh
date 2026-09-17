@@ -124,7 +124,8 @@ prs=$(cat "$tmp"/search-* | jq -s 'add | unique_by(.number)')
 #
 # Both this and the requested-team member lookup below only need $prs, so
 # they run concurrently.
-fetch_pr_review_state "$prs" "$me" > "$tmp/review-state" &
+watch_users=$(thread_watch_users)
+fetch_pr_review_state "$prs" "$me" all "$watch_users" > "$tmp/review-state" &
 review_pid=$!
 
 # Resolve each requested team to its member logins so todo.jq can tell whether
@@ -163,6 +164,7 @@ jq -rn -L "$dir" \
   --argjson teamLogins "$my_logins" \
   --argjson approvalThreshold "${APPROVAL_THRESHOLD:-1}" \
   --argjson jiraStatuses "$jira_statuses" \
+  --argjson watchUsers "$watch_users" \
   --arg jiraBase "${JIRA_BASE_URL:-}" \
   --arg jiraPattern "$ticket_pattern" \
   --argjson long "$long" \

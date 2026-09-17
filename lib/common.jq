@@ -269,6 +269,14 @@ def approvalsPaint($stats; $approvalThreshold):
 def threadsMine($map):   ($map[.number | tostring].mine   // {});
 def threadsTheirs($map): ($map[.number | tostring].theirs // {});
 
+# One watched login's bucket, keyed by its lowercased login — see
+# thread_watch_users in common.sh for where those keys come from.
+def threadsWatched($map; $key): ($map[.number | tostring].watched[$key] // {});
+
+# Whether this PR has more review threads than the single page the lookup
+# asks for, in which case every bucket for it is a floor rather than a count.
+def threadsTruncated($map): ($map[.number | tostring].truncated // false);
+
 # The non-zero parts of a bucket, in pending -> answered -> resolved order.
 # Zero states are dropped so a settled PR reads "4 (4 resolved)" instead of
 # padding out every row with noise; since the three sum to total, a non-zero
@@ -282,10 +290,17 @@ def threadSegments($stats):
 # "N (P pending, A answered, R resolved)" — N total threads in the bucket,
 # split into the three states (zero ones omitted). Plain-text form shared by
 # todo.jq/mine.jq; "-" when the bucket is empty.
-def threadsCell($stats):
+# $truncated marks the PR as having threads past the fetched page: the total
+# then prints as "27+", so an undercount reads as obviously incomplete instead
+# of as a wrong number. A bucket can be empty and still truncated (the missing
+# threads may all be this login's), which is why that case prints "0+" rather
+# than the "-" a genuinely empty bucket gets.
+def threadsCell($stats; $truncated):
   ($stats.total // 0) as $t
-  | if $t == 0 then "-"
-    else "\($t) (" + (threadSegments($stats) | map("\(.n) \(.label)") | join(", ")) + ")"
+  | if $t == 0 and ($truncated | not) then "-"
+    elif $t == 0 then "0+"
+    else "\($t)\(if $truncated then "+" else "" end) ("
+         + (threadSegments($stats) | map("\(.n) \(.label)") | join(", ")) + ")"
     end;
 
 # Colors are named rather than passed as functions (jq has no first-class
@@ -303,11 +318,13 @@ def paintByName($name):
 # Both forms are built from the same threadSegments list, which is what keeps
 # them emitting identical visible characters — required, since colWidths sizes
 # columns off the plain cell and callers pad by its length.
-def threadsPaint($stats; $colors):
+def threadsPaint($stats; $colors; $truncated):
   ($stats.total // 0) as $t
-  | if $t == 0 then ("-" | dim)
+  | (if $truncated then ("+" | yellow) else "" end) as $more
+  | if $t == 0 and ($truncated | not) then ("-" | dim)
+    elif $t == 0 then ("0" | dim) + $more
     else
-      ("\($t)" | cyan) + (" (" | dim)
+      ("\($t)" | cyan) + $more + (" (" | dim)
       + ( threadSegments($stats)
           | map(. as $s | "\($s.n) \($s.label)" | paintByName($colors[$s.label]))
           | join(", " | dim) )
