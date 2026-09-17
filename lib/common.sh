@@ -634,6 +634,23 @@ jira_api_base() {
 # A Cloud site publishes its own cloud ID unauthenticated, so init can resolve
 # it without the token and a hand-written profile can leave it out. Prints
 # nothing for a non-Cloud instance or an unreachable site.
+# Accepts a bare org ("yourorg") or a full site URL, and normalizes both to
+# the site root — the one value a profile carries, from which normalize_jira_config
+# derives the /browse URL and jira_api_base the REST base. Empty in, empty out.
+# Shared by init and `profile set` so the two cannot drift.
+normalize_jira_site_input() { # $1: what the user typed
+  local input="$1" site=""
+  [ -n "$input" ] || { printf '\n'; return; }
+  case "$input" in
+    http://*|https://*) site="$input" ;;
+    *)                  site="https://${input}.atlassian.net" ;;
+  esac
+  site="${site%/}"
+  site="${site%/browse}"
+  site="${site%/}"
+  printf '%s\n' "$site"
+}
+
 jira_lookup_cloud_id() { # $1: site root
   curl -sS --max-time 10 "$1/_edge/tenant_info" 2>/dev/null \
     | jq -r 'if type == "object" and (.cloudId | type) == "string" then .cloudId else empty end' 2>/dev/null

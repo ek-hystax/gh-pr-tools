@@ -170,8 +170,13 @@ THREAD_WATCH_USERS=coderabbitai,sonarcloud
 ```
 
 `gh pr-tools init` prompts for this; blank means no extra columns and nothing
-changes. To add it to a profile you already have, either re-run `init` or put
-the line in `~/.config/gh-pr-tools/profiles/<name>.sh` by hand.
+changes. To change it on a profile you already have, without re-running `init`
+and re-entering everything else:
+
+```bash
+gh pr-tools profile set thread-watch-users coderabbitai
+gh pr-tools profile unset thread-watch-users
+```
 
 Their threads are **subtracted** from `THREADS`, so the columns partition the
 PR's threads rather than double-counting them — in `mine`, `THREADS` then means
@@ -431,12 +436,54 @@ Runs until checks finish or you `Ctrl-C`. On macOS it also fires a native deskto
 ```bash
 gh pr-tools profile list
 gh pr-tools profile show [name]
+gh pr-tools profile set <key> [value]
+gh pr-tools profile unset <key>
 gh pr-tools profile remove <name>
 ```
 
 - `list` — all profiles; marks a checkout match with `(cwd)`
 - `show [name]` — print settings (default: currently resolved profile)
+- `set <key> [value]` — change one setting without re-running `init`
+- `unset <key>` — drop one setting, reverting it to its default
 - `remove <name>` — delete a profile
+
+`set` and `unset` act on the resolved profile; use the global `--profile NAME`
+to pick another. Keys are case-insensitive and `-` is accepted for `_`, so
+these are the same key:
+
+```bash
+gh pr-tools profile set thread-watch-users coderabbitai
+gh pr-tools profile set THREAD_WATCH_USERS coderabbitai
+gh pr-tools -p work profile set approval-threshold 2
+```
+
+The rewrite is line-oriented: the one key changes where it stands and every
+other line — including comments and keys these commands don't know about — is
+left alone, as is the file's owner-only mode. A key written as `export KEY=` or
+indented counts as the same key, since a hand-edited file sources it that way.
+Each value is validated at least as strictly as `init` validates the matching
+prompt, so `set` can't write a profile `init` would have refused. An unknown
+key is rejected rather than written, which is the main thing this buys over
+editing the file by hand.
+
+Omit the value to be prompted for it. For `jira-api-token` that's required —
+it refuses a value on the command line, since a command line is visible to
+`ps` and lands in shell history:
+
+```bash
+gh pr-tools profile set jira-api-token      # prompts, hidden
+```
+
+`REPO`, `ORG` and `GH_USERNAME` can be changed but not unset — `init` requires
+all three.
+
+Changing `jira-site` normalizes a bare org into a full URL. Both `jira-site`
+and `jira-api-token` then reconcile the stored cloud ID, which belongs to one
+site and is only worth keeping alongside a token: it is re-resolved when the
+profile has both, and dropped otherwise. That is why setting the token
+resolves the cloud ID too, rather than leaving a token with no ID behind —
+without one, Jira requests fall back to the site host, where some orgs answer
+a valid token as an anonymous user and the status column silently goes blank.
 
 ### `tg` — Telegram map
 

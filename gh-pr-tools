@@ -13,6 +13,9 @@ commands:
   init                              create or update a profile (repo/org/Jira)
   profile list                      list all profiles ((cwd) marks a checkout match)
   profile show [name]               print a profile's settings (default: currently resolved)
+  profile set <key> [value]         change one setting on the resolved profile
+                                    (omit value to be prompted; --profile picks another)
+  profile unset <key>               drop one setting, reverting it to its default
   profile remove <name>             delete a profile
   prd [--watch[=INTERVAL]] <pr|TICKET-123|link|branch>
                                     show a PR's approvers and pending reviewers

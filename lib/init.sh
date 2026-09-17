@@ -36,20 +36,9 @@ username="${username:-$default_username}"
 
 read -rp "Jira ticket prefix, e.g. KF (blank = match any PROJECT-123 style ticket): " prefix
 
-# Accepts a bare org ("yourorg") or a full site URL, and normalizes both to
-# the site root. common.sh derives the /browse URL and the REST base from it,
-# so the profile only has to carry the one value.
 read -rp "Jira site, e.g. yourorg or https://yourorg.atlassian.net (blank = no Jira links): " jira_input
-jira_site=""
-if [ -n "$jira_input" ]; then
-  case "$jira_input" in
-    http://*|https://*) jira_site="$jira_input" ;;
-    *)                  jira_site="https://${jira_input}.atlassian.net" ;;
-  esac
-  jira_site="${jira_site%/}"
-  jira_site="${jira_site%/browse}"
-  jira_site="${jira_site%/}"
-fi
+# Bare org or full URL, normalized to the site root — see normalize_jira_site_input.
+jira_site=$(normalize_jira_site_input "$jira_input")
 
 # The token is optional and only buys the ticket *status* column — links work
 # without it — so every prompt below can be skipped with a blank answer.
