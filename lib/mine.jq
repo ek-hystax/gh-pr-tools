@@ -17,8 +17,10 @@ def sizePaint:
   + " +\(.additions // 0 | tostring | green)"
   + "/\("-" + (.deletions // 0 | tostring) | red)";
 
-# Watched-login columns. THREADS counts only the threads reviewers opened
-# (theirs bucket); each watched column counts the threads that login opened.
+# Watched-login columns. THREADS counts every thread a watched login didn't
+# open (unwatched bucket) — reviewers', bots' and your own alike, since agents
+# open threads under your login; each watched column counts the threads that
+# login opened, and the two sets partition the PR's threads.
 # $watchUsers arrives as [{display, key}] in configured order (see
 # thread_watch_users in common.sh); the column key is prefixed so a login can
 # never collide with a built-in column name, and $display carries the login in
@@ -53,7 +55,7 @@ def cells:
     PR:         (if $shortLinks then "#\(.number)" else .url end),
     TITLE:      .title[0:80],
     STATUS:     approvalDecision(._approvalStats; $approvalThreshold),
-    THREADS:    threadsCell(threadsTheirs($threads); threadsTruncated($threads); $shortLabels),
+    THREADS:    threadsCell(threadsUnwatched($threads); threadsTruncated($threads); $shortLabels),
     APPROVALS:  approvalsCell(._approvalStats; $approvalThreshold),
     CI:         ci,
     JIRA:       jira,
@@ -110,7 +112,7 @@ def cols:
         elif $cols[$i] == "SIZE" then
           ($pr | sizePaint) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "THREADS" then
-          ($pr | threadsPaint(threadsTheirs($threads); threadsTruncated($threads); $shortLabels)) + (" " * ($w[$i] - ($c[$i] | length)))
+          ($pr | threadsPaint(threadsUnwatched($threads); threadsTruncated($threads); $shortLabels)) + (" " * ($w[$i] - ($c[$i] | length)))
         elif ($cols[$i] | startswith("WATCH:")) then
           ($pr | threadsPaint(threadsWatched($threads; $cols[$i] | ltrimstr("WATCH:")); threadsTruncated($threads); $shortLabels)) + (" " * ($w[$i] - ($c[$i] | length)))
         elif $cols[$i] == "WAITING" then

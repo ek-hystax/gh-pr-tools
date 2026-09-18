@@ -4,7 +4,7 @@ A [gh](https://cli.github.com/) extension for PR review triage.
 
 - `prd` — who has approved a PR, and who still needs to
 - `todo` — open PRs you're a reviewer on (whether or not you've already approved), including the threads you started split by pending / answered / resolved, and viewed-file progress
-- `mine` — your own open PRs: review status, approvals, threads reviewers started split by pending / answered / resolved, CI
+- `mine` — your own open PRs: review status, approvals, every open thread on them — yours as well as reviewers' — split by pending / answered / resolved, CI
 - `stale-branches` — closed PRs whose head branch is still around (yours by default; `--author`/`--all` for others)
 - `notify` — poll CI until it finishes (macOS desktop notification when done)
 
@@ -180,7 +180,9 @@ gh pr-tools profile unset thread-watch-users
 
 Their threads are **subtracted** from `THREADS`, so the columns partition the
 PR's threads rather than double-counting them — in `mine`, `THREADS` then means
-"threads a human reviewer opened", which is the number you actually wanted.
+"threads nobody I am tracking separately opened", which is the number you
+actually wanted. In `todo`, `THREADS` counts the threads *you* opened and is
+defined by author, so nothing is subtracted from it there.
 
 Matching is case-insensitive, and a trailing `[bot]` is stripped, so
 `coderabbitai` and `coderabbitai[bot]` both work. The bare form is what GitHub's
@@ -340,17 +342,21 @@ As with `todo`, `--short-links` (`-s`) shortens the linked `PR` and `JIRA` cells
 
 `STATUS` is driven by your profile's approval threshold, not GitHub's `reviewDecision` field: it's "Approved" once distinct approvals meet your threshold, "Approved (stale)" if the threshold is only met by counting approvers whose approval is against an older commit, otherwise "Awaiting Approval" — this column doesn't distinguish an outright changes-requested review from one nobody has looked at yet. `APPROVALS` shows `total (team)` — total distinct approvers, and in parens how many of those are members of a team you belong to — colored green once the total meets your threshold. Set your threshold via `gh pr-tools init` or check it with `gh pr-tools profile show`.
 
-The `THREADS` column counts review threads *reviewers* opened — a thread is attributed to whoever left its opening comment, not every participant. It shows `N (P pending, A answered, R resolved)`, where `N` is every thread reviewers started on the PR and the three states are disjoint and sum to `N`:
+The `THREADS` column counts **every** review thread on the PR, whoever raised it — reviewers, bots, and the ones opened under your own login, which is how threads posted on your behalf by an agent get here. It shows `N (P pending, A answered, R resolved)`, where `N` is every thread on the PR and the three states are disjoint and sum to `N`:
 
-- **pending** — still open and still waiting on your reply; the work left for you.
-- **answered** — still open, but your reply is the latest comment, so it's waiting on the reviewer next.
+- **pending** — still open and still on your plate; the work left for you.
+- **answered** — still open, but you have replied since the thread was opened, so it's waiting on someone else next.
 - **resolved** — marked resolved on GitHub; settled.
 
-The three states run a traffic light, worst first: `pending` red, `answered` yellow, `resolved` green. The leading total stays cyan. States with a count of zero are left out, so a PR you've fully worked through reads `4 (4 resolved)` and one you haven't touched yet reads `2 (2 pending)`. Shows `-` only when no reviewer has opened a thread (or when the lookup fails).
+Attribution is by opening comment, not by participant, and it decides only which *column* a thread lands in — `THREADS` versus a watched-login column. It does not change what the three states mean: `pending` is always "waiting on you", whether a reviewer asked for the change or you flagged it yourself.
+
+That last part is why a thread you opened needs a **second** comment from you to count as answered. Its opening comment is already yours, so the plain "your reply is the latest comment" test would call a finding answered the moment it was posted — which is exactly backwards for the case the column exists to catch. A thread someone else opened is unaffected: your reply being last already implies a second comment.
+
+The three states run a traffic light, worst first: `pending` red, `answered` yellow, `resolved` green. The leading total stays cyan. States with a count of zero are left out, so a PR you've fully worked through reads `4 (4 resolved)` and one you haven't touched yet reads `2 (2 pending)`. Shows `-` only when the PR has no threads at all (or when the lookup fails).
 
 `--short-labels` (`-S`) collapses the state words here too: `5 (1P 1A 3R)` instead of `5 (1 pending, 1 answered, 3 resolved)`.
 
-If [`THREAD_WATCH_USERS`](#watched-thread-authors-thread_watch_users) names any logins, each gets its own column right after `THREADS`, in the order configured, in both the default and `--long` views — and **their threads leave `THREADS`**, which therefore counts only reviewers you are not tracking separately. Watching your review bot is what makes `THREADS` mean "a human opened this".
+If [`THREAD_WATCH_USERS`](#watched-thread-authors-thread_watch_users) names any logins, each gets its own column right after `THREADS`, in the order configured, in both the default and `--long` views — and **their threads leave `THREADS`**, which therefore counts everything you are not tracking separately. Watching your review bot is what makes `THREADS` mean "a human opened this". Watching your *own* login works the same way: your threads move out of `THREADS` and into a column of their own.
 
 The colors match `THREADS` exactly — the same red / yellow / green — so a single row reads the same way across both columns. A watched account resolves its own thread once satisfied, so an open thread you have already replied to is still waiting on it. A column is rendered even when every row is `-`, so the table keeps its shape between runs.
 

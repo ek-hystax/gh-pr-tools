@@ -261,13 +261,14 @@ def approvalsPaint($stats; $approvalThreshold):
   | (")" | dim) as $suffix
   | $num + $mid + $sep + $staleNum + $suffix;
 
-# Review-thread stats, keyed by PR number, as {"mine": <bucket>, "theirs":
+# Review-thread stats, keyed by PR number, as {"mine": <bucket>, "unwatched":
 # <bucket>} where each bucket is {"total": N, "pending": P, "answered": A,
 # "resolved": R} — see fetch_pr_review_state in common.sh for how $map is
-# built and what the three states mean. Missing PR (failed lookup) yields {},
-# which the // 0 defaults below turn into a "-" cell.
-def threadsMine($map):   ($map[.number | tostring].mine   // {});
-def threadsTheirs($map): ($map[.number | tostring].theirs // {});
+# built, what the three states mean, and why the two buckets overlap. Missing
+# PR (failed lookup) yields {}, which the // 0 defaults below turn into a "-"
+# cell.
+def threadsMine($map):      ($map[.number | tostring].mine      // {});
+def threadsUnwatched($map): ($map[.number | tostring].unwatched // {});
 
 # One watched login's bucket, keyed by its lowercased login — see
 # thread_watch_users in common.sh for where those keys come from.

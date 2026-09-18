@@ -473,14 +473,28 @@ thread_watch_users() {
 # aliased pullRequest field per PR carrying both selections) — a single round
 # trip for the whole PR list instead of two, and instead of one per PR.
 #
-# Threads are split by who left the *opening* comment (a static fact about
-# the thread, not an activity trace of every reply): $2 ("mine") vs anyone
-# else ("theirs"). Each bucket counts every thread, resolved ones included,
-# and breaks the total into three disjoint states that sum back to it:
+# Threads are bucketed by who left the *opening* comment — a static fact
+# about the thread, not an activity trace of every reply. Two buckets are
+# always produced, and they deliberately overlap, because the two commands
+# ask different questions of the same threads:
+#   mine      — opened by $2. What todo shows: the threads you started on
+#               someone else's PR.
+#   unwatched — opened by anyone who isn't a watched login. What mine shows:
+#               every open concern on your own PR, whoever raised it — you
+#               included, since agents open threads under your own login.
+# Each bucket counts every thread, resolved ones included, and breaks the
+# total into three disjoint states that sum back to it:
 #   resolved — marked resolved on GitHub
-#   answered — still open, but the *last* comment is the PR owner's, meaning
-#              they've replied (e.g. "Fixed") without the thread being closed
-#   pending  — still open with no reply from the owner yet
+#   answered — still open, with at least two comments and the *last* one the
+#              PR owner's, meaning they've replied (e.g. "Fixed") without the
+#              thread being closed
+#   pending  — still open, waiting on the owner
+# The two-comment floor is what keeps a thread the owner opened and never
+# came back to out of "answered": its only comment is the owner's, so the
+# last-comment test alone would call it answered the instant it was posted.
+# On a thread someone else opened the floor is inert — a last comment from
+# the owner already implies a second comment — so the rule is stated once
+# and applies everywhere rather than branching on the opener.
 # Note reviewThreads(first:100) is unpaginated (100 is GraphQL's per-page
 # max), and that cap now covers resolved threads too — a PR with a very long
 # resolved history can therefore undercount. pageInfo.hasNextPage rides along
@@ -493,9 +507,12 @@ thread_watch_users() {
 # shouldn't pay for that selection — or risk losing its thread stats to an
 # error in data it never renders). Default: both. $4 = the watched-login array
 # from thread_watch_users (default []); those logins each get a bucket of their
-# own and are taken out of "theirs".
+# own and are taken out of "unwatched", so the two partition the PR's threads
+# exactly. "mine" is never reduced that way: it is defined by author and is
+# what todo displays, so watching your own login duplicates that column rather
+# than cannibalizing it.
 # Prints: {threads: {"<number>": {"mine":      {"total": N, "pending": P, "answered": A, "resolved": R},
-#                                 "theirs":    {"total": M, "pending": Q, "answered": B, "resolved": S},
+#                                 "unwatched": {"total": M, "pending": Q, "answered": B, "resolved": S},
 #                                 "watched":   {"<key>": {"total": ..., ...}},
 #                                 "truncated": <bool>}},
 #          viewed:  {"<number>": {"viewed": N, "total": M}}}
@@ -517,7 +534,7 @@ fetch_pr_review_state() {
 
   query="query(\$owner:String!,\$repo:String!){repository(owner:\$owner,name:\$repo){"
   while IFS= read -r number; do
-    query+="pr${number}:pullRequest(number:${number}){reviewThreads(first:100){pageInfo{hasNextPage} nodes{isResolved comments(first:1){nodes{author{login}}} lastComments: comments(last:1){nodes{author{login}}}}} ${files_sel}} "
+    query+="pr${number}:pullRequest(number:${number}){reviewThreads(first:100){pageInfo{hasNextPage} nodes{isResolved comments(first:1){totalCount nodes{author{login}}} lastComments: comments(last:1){nodes{author{login}}}}} ${files_sel}} "
   done <<<"$numbers"
   query+="}}"
 
@@ -526,12 +543,16 @@ fetch_pr_review_state() {
   result=$(gh api graphql -f query="$query" -f owner="$owner" -f repo="$repo_name" 2>/dev/null \
     | jq --arg me "$me" --argjson prs "$prs" --argjson wantViewed "$want_viewed" \
          --argjson watch "$watch_users" '
+        # This filter is a single-quoted shell string: an apostrophe anywhere
+        # in it, comments included, ends the string and breaks the file.
+        #
         # Input is the thread list for one bucket; $owner is the login of the
         # PR author, whose reply is what makes an open thread "answered".
         def bucketStats($owner):
           ([.[] | select(.isResolved)] | length) as $resolved
           | [.[] | select(.isResolved | not)] as $open
-          | ([$open[] | select(.lastComments.nodes[0].author.login == $owner)] | length) as $answered
+          | ([$open[] | select(.comments.totalCount > 1
+                               and .lastComments.nodes[0].author.login == $owner)] | length) as $answered
           | { total: length,
               pending: (($open | length) - $answered),
               answered: $answered,
@@ -542,11 +563,13 @@ fetch_pr_review_state() {
         # GraphQL reports.
         def openerKey: ((.comments.nodes[0].author.login // "") | ascii_downcase);
 
-        # Watched logins are taken out of "theirs" so the watched columns and
-        # THREADS partition the threads rather than double-counting them. Only
-        # "theirs" ever loses threads this way — "mine" is what todo displays
-        # and it is defined by author, so watching your own login duplicates
-        # that column rather than cannibalizing it, with no special case here.
+        # Watched logins are taken out of "unwatched" so the watched columns
+        # and the THREADS column in mine partition the threads rather than
+        # double-counting them — watching your own login therefore splits your
+        # threads out of THREADS into a column of their own, the same knob
+        # working the same way for you as for a review bot. Only "unwatched"
+        # loses threads this way; "mine" is what todo displays and is defined
+        # by author alone, with no special case here.
         ($watch | map(.key)) as $subtractKeys
         | (reduce $prs[] as $pr ({}; .[$pr.number | tostring] = $pr.author.login)) as $owners
         | .data.repository
@@ -557,12 +580,11 @@ fetch_pr_review_state() {
               value: (
                 ($owners[.num] // "") as $owner
                 | [.value.reviewThreads.nodes[]?] as $threads
-                | { mine:   ($threads | map(select(.comments.nodes[0].author.login == $me)) | bucketStats($owner)),
-                    theirs: ($threads
-                             | map(. as $t | ($t | openerKey) as $k
-                                   | select($t.comments.nodes[0].author.login != $me
-                                            and ($subtractKeys | index($k)) == null))
-                             | bucketStats($owner)),
+                | { mine:      ($threads | map(select(.comments.nodes[0].author.login == $me)) | bucketStats($owner)),
+                    unwatched: ($threads
+                                | map(. as $t | ($t | openerKey) as $k
+                                      | select(($subtractKeys | index($k)) == null))
+                                | bucketStats($owner)),
                     watched: (reduce $watch[] as $u ({};
                                 .[$u.key] = ($threads
                                              | map(select(openerKey == $u.key))
