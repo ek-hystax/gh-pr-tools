@@ -41,11 +41,15 @@ load_config
 
 ticket_pattern="${JIRA_PREFIX:-[A-Za-z]+}-[0-9]+"
 
-# Fields beyond the default columns (size, merge status) cost real time: each
-# one gh pr list --json doesn't get from the search response directly requires
-# an extra per-PR lookup under the hood. Only ask for them under --long, where
-# they're actually shown. createdAt is always fetched (cheap, part of the base
-# search response) since it drives sorting.
+# Fields beyond the default columns (size, merge status) cost real time, even
+# though gh resolves the whole --json set in a single GraphQL request per page.
+# The cost is inside that one request: selections like mergeable and
+# mergeStateStatus are computed per PR on GitHub's side, so asking for them
+# multiplies the work the server does before it answers at all. Only ask for
+# them under --long, where they're actually shown. createdAt is always fetched
+# (a plain field on the PR, so effectively free) since it drives sorting.
+# statusCheckRollup is the one expensive field we always pay for: the CI column
+# is part of the default view here, not a --long extra.
 fields="number,title,author,reviews,headRefName,headRefOid,url,updatedAt,createdAt,statusCheckRollup"
 if [ "$long" = true ]; then
   fields="$fields,changedFiles,additions,deletions,mergeable,mergeStateStatus"
