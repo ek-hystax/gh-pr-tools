@@ -23,6 +23,10 @@ commands:
                                     list open PRs you're a reviewer on (--watch default: 5m)
   mine [--long] [--short-links] [--short-labels] [--watch[=INTERVAL]]
                                     list your own open PRs (--watch default: 5m)
+  track [--long] [--short-links] [--short-labels] [--limit N] [--list FILE] [--watch[=INTERVAL]] [PR...]
+                                    the repo's open PRs incl. drafts (oldest --limit, default 50), or
+                                    just the ones you name by number or GitHub PR link (any state);
+                                    --list reads them from a file, re-read each refresh (--watch default: 5m)
   stale-branches [--limit N] [--author LOGIN|--all]
                                     closed PRs whose head branch still exists (default: your own; --author for someone else's, --all for the whole repo)
   notify <pr|TICKET-123|link|branch>  poll a PR's CI every 5s, macOS notify when done
@@ -33,12 +37,12 @@ commands:
   tg import --json [file]           bulk add from a {"login": "handle"} JSON file (or stdin)
   clear [-y|--yes]                  remove all config created by init/tg (prompts unless -y)
 
-Profile resolution (for prd/todo/mine/stale-branches): --profile, else match by repo inside a git checkout (must be in git; run init if unmatched).
+Profile resolution (for prd/todo/mine/track/stale-branches): --profile, else match by repo inside a git checkout (must be in git; run init if unmatched).
 Telegram map is shared across profiles.
 Team rosters are cached locally for 1h (affects the APPROVALS team split and todo's team-requested PRs).
 Set GH_PR_TOOLS_TEAM_CACHE to another duration (30m, 1h30m) or 0 to bypass — in the environment, or in a profile.
 THREAD_WATCH_USERS (in a profile, or GH_PR_TOOLS_THREAD_WATCH_USERS in the environment) is a comma-separated
-list of logins; each gets its own review-thread column in todo/mine, and its threads leave the THREADS column.
+list of logins; each gets its own review-thread column in todo/mine/track, and its threads leave the THREADS column.
 --short-labels (-S) shortens the review-thread state words in those columns: "6 (2 pending, 1 answered, 3 resolved)" becomes "6 (2P 1A 3R)".
 EOF
 }
@@ -72,6 +76,7 @@ case "$cmd" in
   prd)                exec "$dir/lib/prd.sh" "$@" ;;
   todo)               exec "$dir/lib/todo.sh" "$@" ;;
   mine)               exec "$dir/lib/mine.sh" "$@" ;;
+  track)              exec "$dir/lib/track.sh" "$@" ;;
   stale-branches)     exec "$dir/lib/stale-branches.sh" "$@" ;;
   notify)             exec "$dir/lib/notify.sh" "$@" ;;
   tg)                 exec "$dir/lib/tg.sh" "$@" ;;

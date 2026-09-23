@@ -206,15 +206,26 @@ def approvalStats($author; $teamLogins):
 
 # "N/Y (team M; stale K)" — N total distinct approvers (fresh + stale) out
 # of Y required (the profile's APPROVAL_THRESHOLD), team M of whom are
-# teammates (fresh + stale), with the "; stale K" segment only shown when
-# K > 0. approvalStats keeps fresh and stale counts separate; this is where
-# they're combined for display. Must render the exact same visible
-# characters as approvalsPaint below (colWidths sizes columns off this
-# plain form).
-def approvalsCell($stats; $approvalThreshold):
+# teammates (fresh + stale). Both parenthesized segments are optional: "team
+# M" only when $showTeam, "stale K" only when K > 0, and the parentheses
+# themselves disappear when neither applies. approvalStats keeps fresh and
+# stale counts separate; this is where they're combined for display.
+#
+# $showTeam is false for viewer-neutral callers. The teammate split answers
+# "how many approvers are on a team *I* belong to", which is meaningless when
+# the listing isn't about you — and resolving it costs a team-membership
+# round trip the caller then has no reason to make. track passes false;
+# todo/mine pass true.
+#
+# Must render the exact same visible characters as approvalsPaint below
+# (colWidths sizes columns off this plain form).
+def approvalsCell($stats; $approvalThreshold; $showTeam):
   ($stats.count + $stats.staleCount) as $total
   | ($stats.teamCount + $stats.staleTeamCount) as $teamTotal
-  | "\($total)/\($approvalThreshold) (team \($teamTotal)\(if $stats.staleCount > 0 then "; stale \($stats.staleCount)" else "" end))";
+  | [ if $showTeam then "team \($teamTotal)" else empty end,
+      if $stats.staleCount > 0 then "stale \($stats.staleCount)" else empty end ] as $segs
+  | "\($total)/\($approvalThreshold)"
+    + (if ($segs | length) > 0 then " (\($segs | join("; ")))" else "" end);
 
 # The tool's own approval verdict, driven by the profile's
 # APPROVAL_THRESHOLD (how many approvals *this user* personally requires) —
@@ -245,21 +256,24 @@ def paintDecision:
 
 # Colors just the leading total (fresh + stale) green once it meets the
 # profile's approval threshold *and* nothing is currently blocking it (i.e.
-# approvalDecision doesn't say "Awaiting Approval"), dim otherwise; " (team
-# M...)" stays dim and the "stale K" segment is always yellow regardless of
-# threshold. Must produce the exact same visible characters as approvalsCell
-# above — only ANSI codes differ — since colWidths pads rows based on that
-# plain-text length.
-def approvalsPaint($stats; $approvalThreshold):
+# approvalDecision doesn't say "Awaiting Approval"), dim otherwise; the
+# "team M" segment stays dim and the "stale K" segment is always yellow
+# regardless of threshold. $showTeam has the same meaning as in approvalsCell
+# and must be passed the same value, since the two have to agree on which
+# segments exist. Must produce the exact same visible characters as
+# approvalsCell above — only ANSI codes differ — since colWidths pads rows
+# based on that plain-text length.
+def approvalsPaint($stats; $approvalThreshold; $showTeam):
   (approvalDecision($stats; $approvalThreshold) != "Awaiting Approval") as $met
   | ($stats.count + $stats.staleCount) as $total
   | ($stats.teamCount + $stats.staleTeamCount) as $teamTotal
   | (if $met then ("\($total)/\($approvalThreshold)" | green) else ("\($total)/\($approvalThreshold)" | dim) end) as $num
-  | (" (team \($teamTotal)" | dim) as $mid
-  | (if $stats.staleCount > 0 then ("; " | dim) else "" end) as $sep
-  | (if $stats.staleCount > 0 then ("stale \($stats.staleCount)" | yellow) else "" end) as $staleNum
-  | (")" | dim) as $suffix
-  | $num + $mid + $sep + $staleNum + $suffix;
+  | [ if $showTeam then ("team \($teamTotal)" | dim) else empty end,
+      if $stats.staleCount > 0 then ("stale \($stats.staleCount)" | yellow) else empty end ] as $segs
+  | if ($segs | length) > 0 then
+      $num + (" (" | dim) + ($segs | join(("; " | dim))) + (")" | dim)
+    else $num
+    end;
 
 # Review-thread stats, keyed by PR number, as {"mine": <bucket>, "unwatched":
 # <bucket>} where each bucket is {"total": N, "pending": P, "answered": A,
@@ -364,3 +378,79 @@ def threadsPaint($stats; $truncated; $short):
           | join(threadSegmentSep($short) | dim) )
       + (")" | dim)
     end;
+
+# SIZE cell (todo/mine/track --long): "Nf +A/-D" — files changed, lines added,
+# lines deleted. sizePaint must emit the same visible characters, since
+# colWidths sizes the column off sizeCell.
+def sizeCell:
+  "\(.changedFiles // 0)f +\(.additions // 0)/-\(.deletions // 0)";
+
+def sizePaint:
+  "\(.changedFiles // 0 | tostring | . + "f" | cyan)"
+  + " +\(.additions // 0 | tostring | green)"
+  + "/\("-" + (.deletions // 0 | tostring) | red)";
+
+# MERGE cell (todo/mine/track --long): "conflict" when GitHub reports the PR
+# as conflicting, otherwise its mergeStateStatus, lowercased.
+def mergeState:
+  if .mergeable == "CONFLICTING" then "conflict"
+  else (.mergeStateStatus // "-" | ascii_downcase)
+  end;
+
+def paintMerge:
+  if IN("conflict", "dirty", "blocked") then red
+  elif IN("behind", "unstable") then yellow
+  elif . == "clean" then green
+  else dim end;
+
+# Watched-login columns (THREAD_WATCH_USERS), shared by todo/mine/track, which
+# each pass their own $watchUsers/$threads/$shortLabels since a module cannot
+# see the includer's globals. $watchUsers arrives as [{display, key}] in
+# configured order (see thread_watch_users in common.sh); the column key is
+# prefixed so a login can never collide with a built-in column name, and
+# $display carries the login in the case it was configured with, since
+# uppercasing headers the way the built-in ones do would mangle a mixed-case
+# login. Each column counts the threads that login opened, in the same
+# pending/answered/resolved shape as THREADS — what THREADS itself counts
+# differs per command and is described in each .jq file.
+def watchCol($u): "WATCH:\($u.key)";
+def watchCols($watchUsers): [$watchUsers[] | watchCol(.)];
+def watchHeaders($watchUsers): reduce $watchUsers[] as $u ({}; .[watchCol($u)] = $u.display);
+def isWatchCol: startswith("WATCH:");
+
+def watchCells($watchUsers; $threads; $shortLabels):
+  . as $pr
+  | ($pr | threadsTruncated($threads)) as $trunc
+  | reduce $watchUsers[] as $u ({};
+      .[watchCol($u)] = ($pr | threadsCell(threadsWatched($threads; $u.key); $trunc; $shortLabels)));
+
+# Colored form of one watched-login cell, given its column name.
+def watchPaint($col; $threads; $shortLabels):
+  threadsPaint(threadsWatched($threads; $col | ltrimstr("WATCH:")); threadsTruncated($threads); $shortLabels);
+
+# The table layout todo, mine and track share: a dimmed header row, then one
+# line per row, every column padded to its widest cell and columns separated
+# by two spaces.
+#
+# The per-command parts come in as filter arguments, since jq has no
+# first-class functions to pass by name: `cells` maps a row to its plain cell
+# texts ({<col>: text}), which is what sizes the columns, and `paintCell`
+# produces the colored form of one cell. jq filter arguments take no
+# arguments of their own, so paintCell gets {row, col, text} as its input —
+# the raw PR object, the column name, and that cell's plain text — and must
+# emit exactly the visible characters of `text`, since padding is computed
+# from the plain form.
+def renderTable($rows; $cols; $headers; cells; paintCell):
+  ([$cols[] | $headers[.]]) as $headerCells
+  | ([$rows[] | cells as $all | [$cols[] | $all[.]]]) as $plain
+  | colWidths($headerCells; $plain) as $w
+  | renderHeaderRow($cols; $headers; $w),
+    ( range(0; $rows | length) as $r
+      | $rows[$r] as $row
+      | $plain[$r] as $c
+      | [ range(0; $c | length) as $i
+          | ({row: $row, col: $cols[$i], text: $c[$i]} | paintCell)
+            + (" " * ($w[$i] - ($c[$i] | length)))
+        ]
+      | join("  ")
+    );

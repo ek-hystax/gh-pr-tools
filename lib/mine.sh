@@ -78,26 +78,13 @@ wait "$search_pid"
 prs=$(cat "$tmp/prs")
 
 # Open review-thread stats aren't exposed by `gh pr list`/`pr view --json`
-# (no reviewThreads field), so fetch via GraphQL — see fetch_pr_review_state
-# in common.sh. mine has no VIEWED column, so ask for the threads half only:
-# the viewed-file selection would be fetched and discarded, and since the
-# lookup degrades all-or-nothing, an error in it would blank THREADS too.
-# A bit slower than todo/prd if you have a lot of open PRs, but negligible
-# for a normal workload.
-# Ticket keys come out of the PR list here rather than inside mine.jq, since
-# the whole point is to ask Jira about all of them in one request before the
-# render pass runs. Same extraction the JIRA column uses, so the two agree.
-keys=$(jq -L "$dir" -c --arg jiraPattern "$ticket_pattern" \
-  'include "common"; [.[] | jiraKeyFromBranch($jiraPattern) | select(. != null)] | unique' <<<"$prs")
-
-# Independent of the thread lookup, so the two round trips overlap.
-fetch_jira_statuses "$keys" > "$tmp/jira" &
-jira_pid=$!
-
-watch_users=$(thread_watch_users)
-threads=$(fetch_pr_review_state "$prs" "$me" threads "$watch_users" | jq '.threads')
-wait "$jira_pid"
-jira_statuses=$(cat "$tmp/jira")
+# (no reviewThreads field), so they come from GraphQL, alongside the Jira
+# statuses — see fetch_threads_and_jira_statuses in common.sh, which sets
+# $watch_users, $threads and $jira_statuses. A bit slower than todo/prd if
+# you have a lot of open PRs, but negligible for a normal workload. mine's
+# JIRA column reads the branch name only, so the keys are extracted the same
+# way.
+fetch_threads_and_jira_statuses "$prs" "$me" jiraKeyFromBranch "$tmp"
 
 jq -rn -L "$dir" \
   --argjson threads "$threads" \

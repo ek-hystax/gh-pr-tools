@@ -46,7 +46,7 @@ jira_email=""
 jira_api_token=""
 if [ -n "$jira_site" ]; then
   echo
-  echo "Optional: an API token lets todo/mine/prd show each ticket's Jira status."
+  echo "Optional: an API token lets todo/mine/track/prd show each ticket's Jira status."
   echo "Create one at https://id.atlassian.com/manage-profile/security/api-tokens"
   echo "A scoped token needs read:jira-work; a classic token needs no scopes."
   echo "It is stored in the profile file, which is created readable only by you."
@@ -87,7 +87,7 @@ fi
 # suffix is accepted and stripped at read time, since that is the spelling
 # GitHub's UI shows even though the API this uses reports the bare login.
 echo
-echo "Optional: logins whose review threads get their own todo/mine column,"
+echo "Optional: logins whose review threads get their own todo/mine/track column,"
 echo "e.g. coderabbitai — their threads then stop inflating the THREADS column."
 read -rp "Watch review threads by (comma-separated logins, blank = none): " watch_users
 

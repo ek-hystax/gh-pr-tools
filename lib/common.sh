@@ -8,9 +8,6 @@ tgmap_file="$config_dir/tg-map.json"
 # Optional override set by the entry point from --profile / -p.
 GH_PR_TOOLS_PROFILE="${GH_PR_TOOLS_PROFILE:-}"
 
-# Re-run a command without an intermediary terminal renderer, so ANSI styling
-# and OSC 8 hyperlinks reach the terminal intact. The next frame is fetched
-# before the current one is cleared, avoiding a blank screen during API calls.
 # Convert a positive integer interval with an optional s/m/h suffix to seconds.
 watch_interval_seconds() {
   local value="$1" amount unit multiplier
@@ -25,19 +22,77 @@ watch_interval_seconds() {
   printf '%s\n' "$((amount * multiplier))"
 }
 
+# Whether $1 — the argument following a separate `--watch` — is that flag's
+# interval, for the commands that also take positional arguments (prd, track).
+# A bare number there is ambiguous: it could be an interval in seconds, or the
+# PR to show. Requiring a unit in the separate-argument form resolves it in
+# favour of the PR, so `track --watch 1154` tracks PR 1154 rather than quietly
+# refreshing every 19 minutes; `--watch=1154` still accepts the unitless form.
+# todo and mine take no positional arguments, so there is nothing to confuse
+# and they take any non-option word as the interval.
+is_watch_interval_arg() {
+  [[ "${1:-}" =~ ^[0-9]+[smh]$ ]]
+}
+
+# Re-run a command without an intermediary terminal renderer, so ANSI styling
+# and OSC 8 hyperlinks reach the terminal intact. The next frame is fetched
+# before the current one is cleared, avoiding a blank screen during API calls.
+#
+# The command's stderr is captured rather than left to reach the terminal on
+# its own, because it would arrive *before* the clear and be wiped with the
+# previous frame — every warning a refresh printed would flash and vanish.
+# Captured, it is printed below the new table, where it stays until the next
+# refresh.
+#
+# A failing refresh is survivable once the watch is running: a network blip or
+# a rate limit an hour into a watch should not take the whole thing down, so
+# the last good frame is redrawn — under its own "Last updated" time, which is
+# what makes it recognisably stale — followed by the error and a note that the
+# next interval retries. A failure on the *first* refresh is different: there
+# is no good frame to fall back on, and the invocation itself is the likely
+# culprit (a bad argument, a missing profile), so it exits with the command's
+# status and its stderr, exactly as a single run would.
+#
 # $1 = interval seconds, $2 = display interval, $3 = display label,
 # remaining args = command.
 refresh_command() {
-  local interval_seconds="$1" interval_display="$2" label="$3" output updated_at
+  local interval_seconds="$1" interval_display="$2" label="$3"
+  local output="" new_output updated_at="" status errfile failed_at first=true
   shift 3
 
+  errfile=$(mktemp)
+  # This loop only ever ends by exiting — Ctrl-C, or a failed first refresh —
+  # so an EXIT trap is the one place the temp file can be cleaned up. Callers
+  # set their own EXIT traps only after this point, which a watch never
+  # reaches.
+  trap 'rm -f "$errfile"' EXIT
+
   while true; do
-    output=$("$@")
-    updated_at=$(date '+%Y-%m-%d %H:%M:%S')
+    status=0
+    if new_output=$("$@" 2>"$errfile"); then
+      output="$new_output"
+      updated_at=$(date '+%Y-%m-%d %H:%M:%S')
+    else
+      status=$?
+      if [ "$first" = true ]; then
+        cat "$errfile" >&2
+        exit "$status"
+      fi
+      failed_at=$(date '+%H:%M:%S')
+    fi
+    first=false
     printf '\033[2J\033[H'
     printf 'Every %s: %s (Ctrl-C to stop)\n' "$interval_display" "$label"
     printf 'Last updated: %s\n\n' "$updated_at"
     printf '%s\n' "$output"
+    if [ -s "$errfile" ]; then
+      printf '\n' >&2
+      cat "$errfile" >&2
+    fi
+    if [ "$status" -ne 0 ]; then
+      printf '\nRefresh failed at %s (exit %s) — showing the last successful update; retrying every %s.\n' \
+        "$failed_at" "$status" "$interval_display" >&2
+    fi
     sleep "$interval_seconds"
   done
 }
@@ -445,7 +500,7 @@ fetch_closed_prs_with_branch_status() {
 }
 
 # THREAD_WATCH_USERS is a comma-separated list of GitHub logins whose review
-# threads get a column of their own in todo/mine. Prints a JSON array of
+# threads get a column of their own in todo/mine/track. Prints a JSON array of
 # {display, key} objects: `display` is the login exactly as configured (minus
 # any "[bot]" suffix) and is what the column header shows; `key` is its
 # lowercased form, which thread authors are matched against.
@@ -605,6 +660,99 @@ fetch_pr_review_state() {
   echo "$result"
 }
 
+# Fetch a specific set of PRs by number, whatever state they are in, and
+# return them in the same shape `gh pr list --json` produces — so callers and
+# the jq that renders them never learn which path the rows arrived by.
+#
+# `gh pr list` has no PR-number selector: its only number-ish filter is
+# --search, which is full-text, so searching "4000" matches a PR whose *body*
+# mentions 4000. `gh pr view` is exact but takes one PR per invocation. So
+# this is the aliased-pullRequest pattern fetch_pr_review_state already uses:
+# one round trip for the whole set, regardless of how many numbers were
+# asked for.
+#
+# Two selections come back shaped differently from gh --json, and the jq at
+# the bottom normalizes both:
+#   reviews             GraphQL returns {nodes, pageInfo, totalCount}; gh
+#                       returns the bare array that common.jq iterates.
+#   statusCheckRollup   GraphQL nests it under commits.nodes[0].commit; gh
+#                       flattens it to a top-level array, which is what
+#                       ciState reads. Aliased rollupCommits here so the
+#                       nesting is legible, and dropped after flattening.
+# reviews(first:100) and contexts(first:100) are unpaginated, matching the
+# identical caps in gh own fragment — so a PR with more than 100 reviews
+# undercounts APPROVALS here exactly as it already does in todo and mine.
+#
+# A number with no PR behind it comes back as a null alias alongside an
+# errors array, and is dropped rather than fatal — the caller diffs what it
+# asked for against what it got and warns per missing number. A wholesale
+# failure (bad credentials, network, repo gone) is a different thing and
+# fails loudly: blanking the table would be indistinguishable from a repo
+# with no PRs in it.
+#
+# Args: $1 = newline-separated PR numbers (digits only; anything else is
+# refused rather than interpolated into the query), $2 = true to include the
+# --long-only fields. Prints a JSON array of PR objects.
+fetch_prs_by_number() {
+  local numbers="$1" long="${2:-false}" owner repo_name number query result errfile sel_long=""
+  owner="${REPO%%/*}"
+  repo_name="${REPO##*/}"
+  [ -n "$numbers" ] || { echo '[]'; return; }
+
+  [ "$long" = true ] && sel_long="changedFiles additions deletions mergeable mergeStateStatus"
+
+  query="query(\$owner:String!,\$repo:String!){repository(owner:\$owner,name:\$repo){"
+  while IFS= read -r number; do
+    [ -n "$number" ] || continue
+    # PR numbers reach this function straight from the command line and are
+    # interpolated into the query text (GraphQL has no variable form for an
+    # alias), and one malformed number is a syntax or validation error that
+    # fails the query for every PR in it. So only what GraphQL accepts as a
+    # PR number gets through: a positive 32-bit Int with no leading zero —
+    # "0002" is not an Int literal in GraphQL at all (the same leading-zero
+    # trap stale-branches guards --limit against), and anything past
+    # 2147483647 is out of the Int range. Callers normalise first (see
+    # ref_to_number in track.sh); this is the backstop.
+    [[ "$number" =~ ^[1-9][0-9]{0,9}$ ]] && [ "$number" -le 2147483647 ] || {
+      echo "gh pr-tools: ignoring invalid PR number '$number'" >&2
+      continue
+    }
+    query+="pr${number}:pullRequest(number:${number}){"
+    query+="number title url state isDraft createdAt updatedAt headRefName headRefOid author{login} "
+    query+="reviews(first:100){nodes{author{login} state submittedAt commit{oid}}} "
+    query+="rollupCommits:commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename "
+    query+="...on StatusContext{context state targetUrl createdAt description} "
+    query+="...on CheckRun{name status conclusion startedAt completedAt detailsUrl}}}}}}} "
+    query+="${sel_long}} "
+  done <<<"$numbers"
+  query+="}}"
+
+  # gh api graphql exits non-zero when the response carries an errors array,
+  # even though the data alongside it is good — which is exactly the
+  # partial-success case here. So take the body regardless of exit status and
+  # decide from the body itself whether anything usable came back.
+  errfile=$(mktemp)
+  result=$(gh api graphql -f query="$query" -f owner="$owner" -f repo="$repo_name" 2>"$errfile") || true
+  if ! jq -e '.data.repository != null' <<<"$result" >/dev/null 2>&1; then
+    echo "gh pr-tools: could not fetch PRs from $REPO" >&2
+    sed 's/^/  /' "$errfile" >&2
+    rm -f "$errfile"
+    return 1
+  fi
+  rm -f "$errfile"
+
+  jq -c '
+    .data.repository
+    | to_entries
+    | map(select(.value != null) | .value)
+    | map(. as $n
+          | del(.rollupCommits)
+          | .reviews = [$n.reviews.nodes[]?]
+          | .statusCheckRollup =
+              [$n.rollupCommits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?])
+  ' <<<"$result"
+}
+
 # Jira ----------------------------------------------------------------------
 #
 # Every Jira setting lives in the profile file, the token included — it is a
@@ -734,4 +882,45 @@ fetch_jira_statuses() {
   rm -f "$body"
   jq -e . >/dev/null 2>&1 <<<"$result" || result="$empty"
   echo "$result"
+}
+
+# The per-PR lookups mine and track both run once their PR list is in hand:
+# Jira statuses for the tickets the list mentions, and review-thread stats in
+# the threads-only shape (neither command has a VIEWED column, and the lookup
+# degrades all-or-nothing, so asking for viewed files would only risk losing
+# THREADS to an error in data never rendered). todo needs the viewed half and
+# a team lookup alongside, so it runs its own fan-out instead.
+#
+# Ticket keys come out of the PR list here rather than inside the render jq,
+# since the whole point is to ask Jira about all of them in one request before
+# the render pass runs — and they must come out by the same rule the JIRA
+# column uses, so the two agree. That rule is the one real difference between
+# the callers, hence $3.
+#
+# Args: $1 = JSON array of PRs, $2 = login fetch_pr_review_state attributes
+# its "mine" bucket to ("" when the caller never reads that bucket), $3 = the
+# common.jq key extractor the caller's JIRA column uses: jiraKeyFromBranch or
+# jiraKeyFromBranchOrTitle, $4 = the caller's scratch directory (removed by
+# the caller's EXIT trap). Like resolve_pr, needs $ticket_pattern set; $dir is
+# the lib directory every caller sets before sourcing this file.
+# Sets, like load_config, globals for the caller's render call: watch_users
+# (thread_watch_users), threads (the .threads half of fetch_pr_review_state)
+# and jira_statuses (fetch_jira_statuses).
+fetch_threads_and_jira_statuses() {
+  local prs="$1" me="$2" extractor="$3" scratch="$4" keys jira_pid
+  case "$extractor" in
+    jiraKeyFromBranch|jiraKeyFromBranchOrTitle) ;;
+    *) echo "gh pr-tools: unknown Jira key extractor '$extractor'" >&2; return 1 ;;
+  esac
+  keys=$(jq -L "$dir" -c --arg jiraPattern "$ticket_pattern" \
+    "include \"common\"; [.[] | ${extractor}(\$jiraPattern) | select(. != null)] | unique" <<<"$prs")
+
+  # Independent of the thread lookup, so the two round trips overlap.
+  fetch_jira_statuses "$keys" > "$scratch/jira" &
+  jira_pid=$!
+
+  watch_users=$(thread_watch_users)
+  threads=$(fetch_pr_review_state "$prs" "$me" threads "$watch_users" | jq '.threads')
+  wait "$jira_pid"
+  jira_statuses=$(cat "$scratch/jira")
 }

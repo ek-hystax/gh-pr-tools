@@ -11,7 +11,16 @@ watch_interval=5m
 arg=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --watch|-w) watch=true; shift ;;
+    --watch|-w)
+      watch=true
+      # Same rule as track: a separate interval needs a unit, since a bare
+      # number could just as well be the PR — see is_watch_interval_arg in
+      # common.sh. So `prd --watch 10m 886` refreshes every 10 minutes, and
+      # `prd --watch 886` shows PR 886 at the default interval.
+      if [ $# -gt 1 ] && is_watch_interval_arg "$2"; then watch_interval="$2"; shift 2
+      else shift
+      fi
+      ;;
     --watch=*|-w=*) watch=true; watch_interval="${1#*=}"; shift ;;
     -*)
       echo "gh pr-tools prd: unknown option '$1' (supported: --watch[=INTERVAL])" >&2
