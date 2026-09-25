@@ -100,7 +100,7 @@ def cells:
     PR:         (if $shortLinks then "#\(.number)" else .url end),
     TITLE:      .title[0:80],
     AUTHOR:     .author.login,
-    STATUS:     approvalDecision(._approvalStats; $approvalThreshold),
+    STATUS:     statusCell(._approvalStats; $approvalThreshold),
     APPROVALS:  approvalsCell(._approvalStats; $approvalThreshold; true),
     MINE:       mineState,
     THREADS:    threadsCell(threadsMine($threads); threadsTruncated($threads); $shortLabels),

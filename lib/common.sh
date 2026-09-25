@@ -540,10 +540,14 @@ thread_watch_users() {
 # Each bucket counts every thread, resolved ones included, and breaks the
 # total into three disjoint states that sum back to it:
 #   resolved — marked resolved on GitHub
-#   answered — still open, with at least two comments and the *last* one the
-#              PR owner's, meaning they've replied (e.g. "Fixed") without the
+#   answered — still open, with at least two comments and the *last* one an
+#              owner's, meaning they've replied (e.g. "Fixed") without the
 #              thread being closed
 #   pending  — still open, waiting on the owner
+# The owner is the PR author, plus $2 when $2 is among the PR's assignees —
+# the PR was handed to you, so your reply is the one it's waiting on. Only
+# mine --include-assigned fetches .assignees; without it every PR has the
+# author as its only owner.
 # The two-comment floor is what keeps a thread the owner opened and never
 # came back to out of "answered": its only comment is the owner's, so the
 # last-comment test alone would call it answered the instant it was posted.
@@ -556,7 +560,8 @@ thread_watch_users() {
 # as "truncated" so the undercount is visible rather than silent: threadsCell
 # in common.jq suffixes such totals with "+".
 #
-# Args: $1 = JSON array of PRs (needs .number and .author.login), $2 = login
+# Args: $1 = JSON array of PRs (needs .number and .author.login; .assignees
+# is optional, see above), $2 = login
 # to attribute as "mine", $3 = "threads" to skip the viewed-file half (the
 # fallback below is all-or-nothing, so a caller with no VIEWED column
 # shouldn't pay for that selection — or risk losing its thread stats to an
@@ -601,13 +606,15 @@ fetch_pr_review_state() {
         # This filter is a single-quoted shell string: an apostrophe anywhere
         # in it, comments included, ends the string and breaks the file.
         #
-        # Input is the thread list for one bucket; $owner is the login of the
-        # PR author, whose reply is what makes an open thread "answered".
-        def bucketStats($owner):
+        # Input is the thread list for one bucket; $owners is the logins
+        # whose reply is what makes an open thread "answered": the PR author,
+        # and $me on a PR assigned to $me.
+        def bucketStats($owners):
           ([.[] | select(.isResolved)] | length) as $resolved
           | [.[] | select(.isResolved | not)] as $open
           | ([$open[] | select(.comments.totalCount > 1
-                               and .lastComments.nodes[0].author.login == $owner)] | length) as $answered
+                               and ((.lastComments.nodes[0].author.login // "") as $l
+                                    | any($owners[]; . == $l)))] | length) as $answered
           | { total: length,
               pending: (($open | length) - $answered),
               answered: $answered,
@@ -626,24 +633,28 @@ fetch_pr_review_state() {
         # loses threads this way; "mine" is what todo displays and is defined
         # by author alone, with no special case here.
         ($watch | map(.key)) as $subtractKeys
-        | (reduce $prs[] as $pr ({}; .[$pr.number | tostring] = $pr.author.login)) as $owners
+        | (reduce $prs[] as $pr ({};
+            .[$pr.number | tostring] =
+              [$pr.author.login]
+              + (if $me != "" and any($pr.assignees[]?; .login == $me) then [$me] else [] end)))
+          as $owners
         | .data.repository
         | to_entries
         | map(select(.value != null) | .num = (.key | ltrimstr("pr")))
         | { threads: (map({
               key: .num,
               value: (
-                ($owners[.num] // "") as $owner
+                ($owners[.num] // []) as $prOwners
                 | [.value.reviewThreads.nodes[]?] as $threads
-                | { mine:      ($threads | map(select(.comments.nodes[0].author.login == $me)) | bucketStats($owner)),
+                | { mine:      ($threads | map(select(.comments.nodes[0].author.login == $me)) | bucketStats($prOwners)),
                     unwatched: ($threads
                                 | map(. as $t | ($t | openerKey) as $k
                                       | select(($subtractKeys | index($k)) == null))
-                                | bucketStats($owner)),
+                                | bucketStats($prOwners)),
                     watched: (reduce $watch[] as $u ({};
                                 .[$u.key] = ($threads
                                              | map(select(openerKey == $u.key))
-                                             | bucketStats($owner)))),
+                                             | bucketStats($prOwners)))),
                     truncated: (.value.reviewThreads.pageInfo.hasNextPage // false) }
               )
             }) | from_entries),

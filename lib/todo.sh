@@ -8,6 +8,7 @@ source "$dir/common.sh"
 long=false
 short_links=false
 short_labels=false
+include_drafts=false
 watch=false
 watch_interval=5m
 command_args=()
@@ -16,6 +17,7 @@ while [ $# -gt 0 ]; do
     --long|-l) long=true; command_args+=("$1"); shift ;;
     --short-links|-s) short_links=true; command_args+=("$1"); shift ;;
     --short-labels|-S) short_labels=true; command_args+=("$1"); shift ;;
+    --include-drafts|-d) include_drafts=true; command_args+=("$1"); shift ;;
     --watch|-w)
       watch=true
       if [ $# -gt 1 ] && [[ "$2" != -* ]]; then watch_interval="$2"; shift 2
@@ -23,7 +25,7 @@ while [ $# -gt 0 ]; do
       fi
       ;;
     --watch=*|-w=*) watch=true; watch_interval="${1#*=}"; shift ;;
-    *) echo "gh pr-tools todo: unknown option '$1' (supported: --long, --short-links, --short-labels, --watch[=INTERVAL])" >&2; exit 1 ;;
+    *) echo "gh pr-tools todo: unknown option '$1' (supported: --long, --short-links, --short-labels, --include-drafts, --watch[=INTERVAL])" >&2; exit 1 ;;
   esac
 done
 
@@ -55,6 +57,15 @@ ticket_pattern="${JIRA_PREFIX:-[A-Za-z]+}-[0-9]+"
 fields="number,title,author,reviews,reviewRequests,url,updatedAt,createdAt,headRefOid,headRefName"
 if [ "$long" = true ]; then
   fields="$fields,changedFiles,additions,deletions,mergeable,mergeStateStatus,statusCheckRollup"
+fi
+
+# Drafts are left out unless --include-drafts asks for them — see the same
+# block in mine.sh. The filter goes into every search start_search launches,
+# the team-review-requested ones included.
+draft_filter="-is:draft"
+if [ "$include_drafts" = true ]; then
+  draft_filter=""
+  fields="$fields,isDraft"
 fi
 
 # Every fetch below is a network round trip, so independent ones run as
@@ -89,7 +100,7 @@ drain_searches() {
 # teams (immaterial to the deduped result, but it keeps `cat` predictable).
 start_search() {
   gh pr list --repo "$REPO" \
-    --search "$1 is:open -is:draft -author:@me sort:created-asc" \
+    --search "$1 is:open $draft_filter -author:@me sort:created-asc" \
     --json "$fields" > "$(printf '%s/search-%03d' "$tmp" "$search_count")" &
   search_pids+=($!)
   search_count=$((search_count + 1))

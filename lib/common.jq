@@ -243,6 +243,16 @@ def approvalDecision($stats; $approvalThreshold):
   else "Awaiting Approval"
   end;
 
+# STATUS cell for todo/mine: "Draft" in place of the approval decision when
+# the PR is a draft (only fetched under --include-drafts; missing reads as
+# false). A draft can't be merged whatever its approvals say, so the decision
+# would read as a call to action nobody can take yet. APPROVALS still shows
+# the counts.
+def statusCell($stats; $approvalThreshold):
+  if (.isDraft // false) then "Draft"
+  else approvalDecision($stats; $approvalThreshold)
+  end;
+
 # Shared by mine.jq/todo.jq (Title Case cell text) and prd.jq (lowercased
 # prose) — compares case-insensitively so callers can colorize either casing
 # without duplicating this per file. For "Approved (stale)", the
@@ -252,6 +262,7 @@ def paintDecision:
   (. | ascii_downcase) as $l
   | if $l == "approved" then green
     elif $l == "approved (stale)" then (.[0:8] | green) + (.[8:] | yellow)
+    elif $l == "draft" then dim
     else yellow end;
 
 # Colors just the leading total (fresh + stale) green once it meets the

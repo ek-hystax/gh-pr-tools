@@ -19,10 +19,10 @@ commands:
   profile remove <name>             delete a profile
   prd [--watch[=INTERVAL]] <pr|TICKET-123|link|branch>
                                     show a PR's approvers and pending reviewers
-  todo [--long] [--short-links] [--short-labels] [--watch[=INTERVAL]]
+  todo [--long] [--short-links] [--short-labels] [--include-drafts] [--watch[=INTERVAL]]
                                     list open PRs you're a reviewer on (--watch default: 5m)
-  mine [--long] [--short-links] [--short-labels] [--watch[=INTERVAL]]
-                                    list your own open PRs (--watch default: 5m)
+  mine [--long] [--short-links] [--short-labels] [--include-drafts] [--include-assigned] [--watch[=INTERVAL]]
+                                    list your own open PRs; --include-assigned adds ones assigned to you (--watch default: 5m)
   track [--long] [--short-links] [--short-labels] [--limit N] [--list FILE] [--watch[=INTERVAL]] [PR...]
                                     the repo's open PRs incl. drafts (oldest --limit, default 50), or
                                     just the ones you name by number or GitHub PR link (any state);
@@ -44,6 +44,7 @@ Set GH_PR_TOOLS_TEAM_CACHE to another duration (30m, 1h30m) or 0 to bypass — i
 THREAD_WATCH_USERS (in a profile, or GH_PR_TOOLS_THREAD_WATCH_USERS in the environment) is a comma-separated
 list of logins; each gets its own review-thread column in todo/mine/track, and its threads leave the THREADS column.
 --short-labels (-S) shortens the review-thread state words in those columns: "6 (2 pending, 1 answered, 3 resolved)" becomes "6 (2P 1A 3R)".
+--include-drafts (-d) adds draft PRs to todo/mine, which leave them out by default; their STATUS reads "Draft".
 EOF
 }
 

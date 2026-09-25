@@ -298,12 +298,14 @@ gh pr-tools -p work prd 886
 ### `todo` — PRs you're reviewing
 
 ```text
-gh pr-tools todo [--long] [--short-links] [--short-labels] [--watch[=INTERVAL]]
+gh pr-tools todo [--long] [--short-links] [--short-labels] [--include-drafts] [--watch[=INTERVAL]]
 ```
 
 Lists open PRs where you're an actual reviewer — currently requested, or you've left any review, including ones you've already approved. By default shows a compact table (title, linked PR URL, author, status, your review state, approvals, review threads, viewed-file progress, whether new changes landed since your review, how long it's been in its current state, and the Jira ticket with its status); pass `--long` for all columns, adding last-updated, age, size, CI, and merge status.
 
 The `PR` and `JIRA` columns are always OSC 8 hyperlinks, rendered in underlined cyan so a clickable cell is distinguishable from ordinary colored text — an OSC 8 target is invisible otherwise. Pass `--short-links` (`-s`) to display their labels as `#1154` and `KF-1309` instead of the full URLs — the links still work, and the two widest columns in the table collapse to a few characters. WezTerm supports these links directly.
+
+Draft PRs are left out. Pass `--include-drafts` (`-d`) to list them too; a draft row reads `Draft` in `STATUS`, dimmed, in place of the approval decision, since nothing can merge it until it's marked ready. `APPROVALS` still shows the counts.
 
 Pass `--watch` (`-w`) to refresh in place every 5 minutes until Ctrl-C, with the last successful update time shown above the table. Supply a positive integer with an optional `s`, `m`, or `h` suffix to change the interval, such as `--watch=30s`, `--watch 10m`, or `-w=1h`. This built-in mode preserves colors and hyperlinks, unlike `procps-ng watch`.
 
@@ -336,10 +338,14 @@ The `PENDING SINCE` column is color-graded by how long the PR has been in its cu
 ### `mine` — your own open PRs
 
 ```text
-gh pr-tools mine [--long] [--short-links] [--short-labels] [--watch[=INTERVAL]]
+gh pr-tools mine [--long] [--short-links] [--short-labels] [--include-drafts] [--include-assigned] [--watch[=INTERVAL]]
 ```
 
-Lists your own open, non-draft PRs with the columns you need to triage them: title, linked PR URL, review status (Approved / Approved (stale) / Awaiting Approval), review threads, how long it's been pending (`PENDING SINCE`, same color grading as `todo`), number of approvals, CI status, and the Jira ticket with its status (same branch-name convention as `todo`). Pass `--long` to add age, size, and merge status.
+Lists your own open PRs with the columns you need to triage them: title, linked PR URL, review status (Approved / Approved (stale) / Awaiting Approval), review threads, how long it's been pending (`PENDING SINCE`, same color grading as `todo`), number of approvals, CI status, and the Jira ticket with its status (same branch-name convention as `todo`). Pass `--long` to add age, size, and merge status.
+
+Drafts are left out by default, as in `todo`; `--include-drafts` (`-d`) brings them in, with `Draft` in `STATUS`.
+
+Pass `--include-assigned` (`-a`) to also list open PRs you're an assignee on — the case where another developer opened a PR and handed it to you to finish. An `AUTHOR` column appears after `PR`: `-` on your own PRs, the author's login on the ones handed to you. The column comes with the flag rather than with the rows, so a `--watch` table keeps its shape when a handed-over PR merges. On those PRs a thread also counts as **answered** when you posted the last reply, not only when the author did, since the thread is now waiting on you. A draft handed to you still needs `--include-drafts` as well.
 
 As with `todo`, `--short-links` (`-s`) shortens the linked `PR` and `JIRA` cells from full URLs to `#1154` and `KF-1309`.
 
@@ -350,7 +356,7 @@ As with `todo`, `--short-links` (`-s`) shortens the linked `PR` and `JIRA` cells
 The `THREADS` column counts **every** review thread on the PR, whoever raised it — reviewers, bots, and the ones opened under your own login, which is how threads posted on your behalf by an agent get here. It shows `N (P pending, A answered, R resolved)`, where `N` is every thread on the PR and the three states are disjoint and sum to `N`:
 
 - **pending** — still open and still on your plate; the work left for you.
-- **answered** — still open, but you have replied since the thread was opened, so it's waiting on someone else next.
+- **answered** — still open, but you have replied since the thread was opened, so it's waiting on someone else next. On a PR assigned to you (`--include-assigned`), the author's reply counts too.
 - **resolved** — marked resolved on GitHub; settled.
 
 Attribution is by opening comment, not by participant, and it decides only which *column* a thread lands in — `THREADS` versus a watched-login column. It does not change what the three states mean: `pending` is always "waiting on you", whether a reviewer asked for the change or you flagged it yourself.
@@ -396,6 +402,8 @@ gh pr-tools mine --long
 gh pr-tools mine --short-links
 gh pr-tools mine --short-links --short-labels
 gh pr-tools mine --short-links --watch
+gh pr-tools mine --include-drafts
+gh pr-tools mine --include-assigned --include-drafts --watch
 gh pr-tools -p work mine
 ```
 
