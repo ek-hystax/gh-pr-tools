@@ -69,18 +69,25 @@ def watchCols: watchCols($watchUsers);
 def watchHeaders: watchHeaders($watchUsers);
 def watchCells: watchCells($watchUsers; $threads; $shortLabels);
 
+# "N/T" — files viewed out of the PR's changed files. T is always exact; a
+# truncated lookup (more files than the page ceiling, or a failed follow-up
+# page; see fetch_pr_review_state in common.sh) marks N with "+", the same
+# marker threadsCell uses, since N is then a floor.
 def viewedCell:
   ($viewed[.number | tostring] // null) as $v
   | if $v == null then "-"
-    else "\($v.viewed // 0)/\($v.total // 0)"
+    else "\($v.viewed // 0)\(if $v.truncated then "+" else "" end)/\($v.total // 0)"
     end;
 
+# A truncated PR is never painted all-viewed: files past the fetched ones may
+# still be unviewed. Must emit the same visible characters as viewedCell.
 def viewedPaint:
   ($viewed[.number | tostring] // null) as $v
   | if $v == null then ("-" | dim)
-    elif ($v.viewed // 0) == ($v.total // 0) then viewedCell | green
+    elif ($v.viewed // 0) == ($v.total // 0) and ($v.truncated | not) then viewedCell | green
     else
       ("\($v.viewed // 0)" | dim)
+      + (if $v.truncated then ("+" | yellow) else "" end)
       + ("/" | dim)
       + ("\($v.total // 0)" | yellow)
     end;

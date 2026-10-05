@@ -526,7 +526,8 @@ thread_watch_users() {
 # list`/`pr view --json` (no reviewThreads/files fields), so fetch via
 # GraphQL. Both are per-PR lookups, so they share one batched query (one
 # aliased pullRequest field per PR carrying both selections) — a single round
-# trip for the whole PR list instead of two, and instead of one per PR.
+# trip for the first page of the whole PR list instead of two, and instead of
+# one per PR. Only PRs past their first page cost more (see below).
 #
 # Threads are bucketed by who left the *opening* comment — a static fact
 # about the thread, not an activity trace of every reply. Two buckets are
@@ -554,18 +555,31 @@ thread_watch_users() {
 # On a thread someone else opened the floor is inert — a last comment from
 # the owner already implies a second comment — so the rule is stated once
 # and applies everywhere rather than branching on the opener.
-# Note reviewThreads(first:100) is unpaginated (100 is GraphQL's per-page
-# max), and that cap now covers resolved threads too — a PR with a very long
-# resolved history can therefore undercount. pageInfo.hasNextPage rides along
-# as "truncated" so the undercount is visible rather than silent: threadsCell
-# in common.jq suffixes such totals with "+".
+# Both connections are paginated, up to review_state_max_pages pages of 100
+# each (1,000 threads, 1,000 files) per PR. The first page of every PR comes
+# from one batched query. Any connection that reports a next page then goes
+# into follow-up rounds: each round is one query with an alias per page still
+# wanted, across every PR, so the number of round trips is set by the PR
+# needing the most rounds rather than by the total across PRs. Threads follow
+# their cursors one page per round. Files cursors are base64-encoded
+# offsets, so when a PR's first page confirms that, all of its remaining file
+# pages go in a single round (see offsetCursor in review-state.jq). A round
+# holds at most review_state_max_aliases pages; the rest wait for the next.
+# A run where no PR has more than 100 threads (or, with files, more than 100
+# files) makes no follow-up round.
+# A connection that hits the page ceiling, or whose follow-up page fails, is
+# reported as "truncated" from whatever was fetched so far: threadsCell and
+# viewedCell suffix such counts with "+", so a partial count reads as partial
+# rather than as a wrong number. Failures are never fatal and never printed:
+# a PR whose first page fails renders "-" on its own, and only a first
+# response with no data at all collapses the whole result (see below).
 #
 # Args: $1 = JSON array of PRs (needs .number and .author.login; .assignees
 # is optional, see above), $2 = login
-# to attribute as "mine", $3 = "threads" to skip the viewed-file half (the
-# fallback below is all-or-nothing, so a caller with no VIEWED column
-# shouldn't pay for that selection — or risk losing its thread stats to an
-# error in data it never renders). Default: both. $4 = the watched-login array
+# to attribute as "mine", $3 = "threads" to skip the viewed-file half (a
+# caller with no VIEWED column shouldn't pay for that selection or its extra
+# pages — or risk an error in it taking down the PR alias, and with it that
+# PR's thread stats, over data it never renders). Default: both. $4 = the watched-login array
 # from thread_watch_users (default []); those logins each get a bucket of their
 # own and are taken out of "unwatched", so the two partition the PR's threads
 # exactly. "mine" is never reduced that way: it is defined by author and is
@@ -575,34 +589,77 @@ thread_watch_users() {
 #                                 "unwatched": {"total": M, "pending": Q, "answered": B, "resolved": S},
 #                                 "watched":   {"<key>": {"total": ..., ...}},
 #                                 "truncated": <bool>}},
-#          viewed:  {"<number>": {"viewed": N, "total": M}}}
-# With $3 = "threads", .viewed is an empty map. On a failed lookup the whole
-# result collapses to {threads: {}, viewed: {}} — the accessors in common.jq
-# read through the missing keys, so no caller needs to special-case it.
+#          viewed:  {"<number>": {"viewed": N, "total": M, "truncated": <bool>}}}
+# total is the PR's changedFiles, exact even when truncated; a truncated
+# viewed is a floor. With $3 = "threads", .viewed is an empty map. A PR whose
+# first page failed is missing from both maps, and a first response with no
+# data at all collapses the result to {threads: {}, viewed: {}} — the
+# accessors in common.jq read through the missing keys, so no caller needs
+# to special-case it. Needs $dir (the lib directory) for review-state.jq.
+review_state_max_pages=10
+review_state_max_aliases=50
+
 fetch_pr_review_state() {
-  local prs="$1" me="$2" want="${3:-all}" watch_users="${4:-[]}" owner repo_name numbers number query result
-  local empty='{"threads":{},"viewed":{}}' files_sel="" want_viewed=true
+  local prs="$1" me="$2" want="${3:-all}" watch_users="${4:-[]}" want_viewed=true
+  local empty='{"threads":{},"viewed":{}}' owner repo_name request response raw merged result
   if [ "$want" = "threads" ]; then
     want_viewed=false
-  else
-    files_sel="files(first:100){nodes{path viewerViewedState}}"
   fi
   owner="${REPO%%/*}"
   repo_name="${REPO##*/}"
-  numbers=$(jq -r '.[].number' <<<"$prs")
-  [ -n "$numbers" ] || { echo "$empty"; return; }
 
-  query="query(\$owner:String!,\$repo:String!){repository(owner:\$owner,name:\$repo){"
-  while IFS= read -r number; do
-    query+="pr${number}:pullRequest(number:${number}){reviewThreads(first:100){pageInfo{hasNextPage} nodes{isResolved comments(first:1){totalCount nodes{author{login}}} lastComments: comments(last:1){nodes{author{login}}}}} ${files_sel}} "
-  done <<<"$numbers"
-  query+="}}"
+  # Every request body ({query, variables}) is built by one jq call and sent
+  # with --input, so no query text or cursor passes through the shell.
+  request=$(jq -L "$dir" -c --arg owner "$owner" --arg repo "$repo_name" --argjson wantViewed "$want_viewed" \
+    'include "review-state"; if length == 0 then empty else firstRequest($owner; $repo; $wantViewed) end' \
+    <<<"$prs") || { echo "$empty"; return; }
+  [ -n "$request" ] || { echo "$empty"; return; }
 
-  # A failed/rate-limited lookup must not abort the whole command — fall back
-  # to empty maps (every PR renders "-") and keep going.
-  result=$(gh api graphql -f query="$query" -f owner="$owner" -f repo="$repo_name" 2>/dev/null \
-    | jq --arg me "$me" --argjson prs "$prs" --argjson wantViewed "$want_viewed" \
-         --argjson watch "$watch_users" '
+  # gh exits non-zero whenever the response carries an errors array, even if
+  # other aliases came back fine, so take the body regardless and let jq
+  # decide per alias. A first response with no data at all (network failure,
+  # rate limit) collapses to empty maps, so every PR renders "-" and the
+  # command keeps going.
+  response=$(gh api graphql --input - <<<"$request" 2>/dev/null) || true
+  raw=$(jq -L "$dir" -c --argjson wantViewed "$want_viewed" \
+    'include "review-state"; init($wantViewed)' <<<"$response" 2>/dev/null) || { echo "$empty"; return; }
+  [ -n "$raw" ] || { echo "$empty"; return; }
+
+  # Follow-up rounds, one request each, until the plan comes out empty. A
+  # connection leaves the plan when it runs out of pages, reaches the
+  # ceiling, or fails once (failed ones are not retried), so every round
+  # makes progress and the loop is bounded by the ceiling. The merge rebuilds
+  # the same plan from the same state, so the two never disagree about which
+  # alias holds which page.
+  while :; do
+    request=$(jq -L "$dir" -c --arg owner "$owner" --arg repo "$repo_name" \
+      --argjson max "$review_state_max_pages" --argjson aliases "$review_state_max_aliases" \
+      'include "review-state"; plan($max; $aliases) as $plan | if $plan == [] then empty else request($owner; $repo; $plan) end' \
+      <<<"$raw") || break
+    [ -n "$request" ] || break
+
+    response=$(gh api graphql --input - <<<"$request" 2>/dev/null) || true
+
+    # The response goes in through --rawfile, not --argjson: a round can
+    # return hundreds of kilobytes, past the argument-size limit, and a body
+    # that is not JSON then becomes {} (every page failed) instead of an
+    # error. Merged into a separate variable: a failed command substitution
+    # still assigns, and raw must survive a failed merge so the connections
+    # still pending come out truncated rather than taking the fetched pages
+    # down with them.
+    merged=$(jq -L "$dir" -c --argjson max "$review_state_max_pages" --argjson aliases "$review_state_max_aliases" \
+      --rawfile response <(printf '%s' "$response") \
+      'include "review-state";
+       merge(plan($max; $aliases); (try ($response | fromjson | .data.repository) catch null) // {})' \
+      <<<"$raw" 2>/dev/null) || break
+    [ -n "$merged" ] || break
+    raw=$merged
+  done
+
+  result=$(jq -L "$dir" --arg me "$me" --argjson prs "$prs" --argjson wantViewed "$want_viewed" \
+       --argjson watch "$watch_users" '
+        include "review-state";
+
         # This filter is a single-quoted shell string: an apostrophe anywhere
         # in it, comments included, ends the string and breaks the file.
         #
@@ -638,14 +695,12 @@ fetch_pr_review_state() {
               [$pr.author.login]
               + (if $me != "" and any($pr.assignees[]?; .login == $me) then [$me] else [] end)))
           as $owners
-        | .data.repository
         | to_entries
-        | map(select(.value != null) | .num = (.key | ltrimstr("pr")))
         | { threads: (map({
-              key: .num,
+              key: .key,
               value: (
-                ($owners[.num] // []) as $prOwners
-                | [.value.reviewThreads.nodes[]?] as $threads
+                ($owners[.key] // []) as $prOwners
+                | .value.threads.nodes as $threads
                 | { mine:      ($threads | map(select(.comments.nodes[0].author.login == $me)) | bucketStats($prOwners)),
                     unwatched: ($threads
                                 | map(. as $t | ($t | openerKey) as $k
@@ -655,18 +710,24 @@ fetch_pr_review_state() {
                                 .[$u.key] = ($threads
                                              | map(select(openerKey == $u.key))
                                              | bucketStats($prOwners)))),
-                    truncated: (.value.reviewThreads.pageInfo.hasNextPage // false) }
+                    truncated: (.value.threads | connTruncated) }
               )
             }) | from_entries),
-            viewed: (if $wantViewed then (map({
-              key: .num,
+            # A complete list is its own exact total. A truncated one takes
+            # changedFiles, so the total stays exact and only viewed falls
+            # short, which truncated says.
+            viewed: (if $wantViewed then (map(select(.value.files != null) | {
+              key: .key,
               value: (
-                [.value.files.nodes[]?] as $files
-                | { viewed: ([$files[] | select(.viewerViewedState == "VIEWED")] | length),
-                    total: ($files | length) }
+                .value.files as $files
+                | { viewed: ([$files.nodes[] | select(.viewerViewedState == "VIEWED")] | length),
+                    total: (if $files | connTruncated
+                            then .value.changedFiles // ($files.nodes | length)
+                            else $files.nodes | length end),
+                    truncated: ($files | connTruncated) }
               )
             }) | from_entries) else {} end) }
-      ') || result="$empty"
+      ' <<<"$raw") || result="$empty"
   echo "$result" | jq -e . >/dev/null 2>&1 || result="$empty"
   echo "$result"
 }

@@ -299,8 +299,9 @@ def threadsUnwatched($map): ($map[.number | tostring].unwatched // {});
 # thread_watch_users in common.sh for where those keys come from.
 def threadsWatched($map; $key): ($map[.number | tostring].watched[$key] // {});
 
-# Whether this PR has more review threads than the single page the lookup
-# asks for, in which case every bucket for it is a floor rather than a count.
+# Whether this PR has review threads the lookup never got to: past the page
+# ceiling, or behind a follow-up page that failed (see fetch_pr_review_state
+# in common.sh). Every bucket for it is then a floor rather than a count.
 def threadsTruncated($map): ($map[.number | tostring].truncated // false);
 
 # The non-zero parts of a bucket, in pending -> answered -> resolved order.
@@ -333,7 +334,7 @@ def threadSegmentSep($short): if $short then " " else ", " end;
 # --short-labels — N total threads in the bucket, split into the three states
 # (zero ones omitted). Plain-text form shared by todo.jq/mine.jq; "-" when the
 # bucket is empty.
-# $truncated marks the PR as having threads past the fetched page: the total
+# $truncated marks the PR as having threads past the fetched pages: the total
 # then prints as "27+", so an undercount reads as obviously incomplete instead
 # of as a wrong number. A bucket can be empty and still truncated (the missing
 # threads may all be this login's), which is why that case prints "0+" rather
