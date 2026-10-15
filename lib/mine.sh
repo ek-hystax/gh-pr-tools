@@ -10,6 +10,7 @@ short_links=false
 short_labels=false
 include_drafts=false
 include_assigned=false
+json=false
 watch=false
 watch_interval=5m
 command_args=()
@@ -20,6 +21,7 @@ while [ $# -gt 0 ]; do
     --short-labels|-S) short_labels=true; command_args+=("$1"); shift ;;
     --include-drafts|-d) include_drafts=true; command_args+=("$1"); shift ;;
     --include-assigned|-a) include_assigned=true; command_args+=("$1"); shift ;;
+    --json) json=true; shift ;;
     --watch|-w)
       watch=true
       if [ $# -gt 1 ] && [[ "$2" != -* ]]; then watch_interval="$2"; shift 2
@@ -27,9 +29,13 @@ while [ $# -gt 0 ]; do
       fi
       ;;
     --watch=*|-w=*) watch=true; watch_interval="${1#*=}"; shift ;;
-    *) echo "gh pr-tools mine: unknown option '$1' (supported: --long, --short-links, --short-labels, --include-drafts, --include-assigned, --watch[=INTERVAL])" >&2; exit 1 ;;
+    *) echo "gh pr-tools mine: unknown option '$1' (supported: --long, --short-links, --short-labels, --include-drafts, --include-assigned, --json, --watch[=INTERVAL])" >&2; exit 1 ;;
   esac
 done
+
+if [ "$json" = true ]; then
+  reject_json_conflicts mine --long="$long" --short-links="$short_links" --short-labels="$short_labels" --watch="$watch"
+fi
 
 if [ "$watch" = true ]; then
   watch_seconds=$(watch_interval_seconds "$watch_interval") || {
@@ -52,11 +58,14 @@ ticket_pattern="${JIRA_PREFIX:-[A-Za-z]+}-[0-9]+"
 # multiplies the work the server does before it answers at all. Only ask for
 # them under --long, where they're actually shown. createdAt is always fetched
 # (a plain field on the PR, so effectively free) since it drives sorting.
+# --json also asks for mergeStateStatus and reviewRequests (mergeState, pendingReviewers).
 # statusCheckRollup is the one expensive field we always pay for: the CI column
 # is part of the default view here, not a --long extra.
 fields="number,title,author,reviews,headRefName,headRefOid,url,updatedAt,createdAt,statusCheckRollup"
 if [ "$long" = true ]; then
   fields="$fields,changedFiles,additions,deletions,mergeable,mergeStateStatus"
+elif [ "$json" = true ]; then
+  fields="$fields,mergeStateStatus,reviewRequests"
 fi
 
 # Drafts are left out unless --include-drafts asks for them. isDraft is a
@@ -101,11 +110,21 @@ fi
 me="${GH_USERNAME:-$(gh api user --jq .login)}"
 
 # Union of the current user's team memberships, for splitting APPROVALS into
-# total vs. teammate counts — see my_team_logins in common.sh.
-my_logins=$(my_team_logins "$me")
+# total vs. teammate counts — see my_team_logins in common.sh. --json skips it.
+if [ "$json" != true ]; then
+  my_logins=$(my_team_logins "$me")
+fi
 
 for pid in "${search_pids[@]}"; do wait "$pid"; done
 prs=$(cat "$tmp"/search-* | jq -s 'add | unique_by(.number)')
+
+# --json: rich thread state only, no Jira lookup.
+if [ "$json" = true ]; then
+  watch_users=$(thread_watch_users)
+  fetch_pr_review_state "$prs" "$me" threads "$watch_users" true > "$tmp/review-state"
+  print_snapshot mine "$prs" "$me" "$tmp/review-state" "$watch_users" '{}'
+  exit 0
+fi
 
 # Open review-thread stats aren't exposed by `gh pr list`/`pr view --json`
 # (no reviewThreads field), so they come from GraphQL, alongside the Jira

@@ -7,8 +7,7 @@ include "common";
 def yn($b): if $b then "yes" else "-" end;
 
 # PR fields
-def mine:
-  [ .reviews[]? | select(.author.login == $me) ] | last;
+def mine: reviewBy($me);
 
 def mineState:
   mine as $m
@@ -47,20 +46,13 @@ def waitingPaint:
   else (isoRel(waitingSince) | dim)
   end;
 
-# Matches both a direct request (.login == $me) and a team request where
-# $me is a member of the requested team (.slug, resolved via $teamMembers).
-def requestedFromMe:
-  ([ .reviewRequests[]? | select(.login == $me) ] | length > 0)
-  or ([ .reviewRequests[]? | select(.slug) | (.slug | split("/") | last) ] as $teams
-      | any($teams[]; $teamMembers[.] // [] | index($me) != null));
+def requestedFromMe: requestedFrom($me; $teamMembers);
 
 # Any PR where I'm an actual reviewer (currently requested, or I've left any
 # review) — including ones where I've already given a fresh approval and
 # nothing further is needed from me; MINE/STATUS/NEW CHANGES already convey
 # that state, so this list doesn't need to filter them out.
-def iAmReviewer:
-  mine as $m
-  | ($m != null or requestedFromMe);
+def iAmReviewer: isReviewer($me; $teamMembers);
 
 # Watched-login columns (see watchCells in common.jq). THREADS counts only
 # the threads I opened (mine bucket); each watched column counts the threads

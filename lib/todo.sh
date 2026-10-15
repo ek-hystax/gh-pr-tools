@@ -9,6 +9,7 @@ long=false
 short_links=false
 short_labels=false
 include_drafts=false
+json=false
 watch=false
 watch_interval=5m
 command_args=()
@@ -18,6 +19,7 @@ while [ $# -gt 0 ]; do
     --short-links|-s) short_links=true; command_args+=("$1"); shift ;;
     --short-labels|-S) short_labels=true; command_args+=("$1"); shift ;;
     --include-drafts|-d) include_drafts=true; command_args+=("$1"); shift ;;
+    --json) json=true; shift ;;
     --watch|-w)
       watch=true
       if [ $# -gt 1 ] && [[ "$2" != -* ]]; then watch_interval="$2"; shift 2
@@ -25,9 +27,13 @@ while [ $# -gt 0 ]; do
       fi
       ;;
     --watch=*|-w=*) watch=true; watch_interval="${1#*=}"; shift ;;
-    *) echo "gh pr-tools todo: unknown option '$1' (supported: --long, --short-links, --short-labels, --include-drafts, --watch[=INTERVAL])" >&2; exit 1 ;;
+    *) echo "gh pr-tools todo: unknown option '$1' (supported: --long, --short-links, --short-labels, --include-drafts, --json, --watch[=INTERVAL])" >&2; exit 1 ;;
   esac
 done
+
+if [ "$json" = true ]; then
+  reject_json_conflicts todo --long="$long" --short-links="$short_links" --short-labels="$short_labels" --watch="$watch"
+fi
 
 if [ "$watch" = true ]; then
   watch_seconds=$(watch_interval_seconds "$watch_interval") || {
@@ -141,7 +147,9 @@ prs=$(cat "$tmp"/search-* | jq -s 'add | unique_by(.number)')
 # Both this and the requested-team member lookup below only need $prs, so
 # they run concurrently.
 watch_users=$(thread_watch_users)
-fetch_pr_review_state "$prs" "$me" all "$watch_users" > "$tmp/review-state" &
+review_want=all
+if [ "$json" = true ]; then review_want=threads; fi
+fetch_pr_review_state "$prs" "$me" "$review_want" "$watch_users" "$json" > "$tmp/review-state" &
 review_pid=$!
 
 # Resolve each requested team to its member logins so todo.jq can tell whether
@@ -154,12 +162,20 @@ members_pid=$!
 # Ticket keys come out of the PR list here rather than inside todo.jq, since
 # the whole point is to ask Jira about all of them in one request before the
 # render pass runs. Launched here so it overlaps the two lookups above.
-keys=$(jq -L "$dir" -c --arg jiraPattern "$ticket_pattern" \
-  'include "common"; [.[] | jiraKeyFromBranch($jiraPattern) | select(. != null)] | unique' <<<"$prs")
-fetch_jira_statuses "$keys" > "$tmp/jira" &
-jira_pid=$!
+# --json has no JIRA columns, so it skips the lookup.
+if [ "$json" != true ]; then
+  keys=$(jq -L "$dir" -c --arg jiraPattern "$ticket_pattern" \
+    'include "common"; [.[] | jiraKeyFromBranch($jiraPattern) | select(. != null)] | unique' <<<"$prs")
+  fetch_jira_statuses "$keys" > "$tmp/jira" &
+  jira_pid=$!
+fi
 
 wait "$review_pid"
+if [ "$json" = true ]; then
+  wait "$members_pid"
+  print_snapshot todo "$prs" "$me" "$tmp/review-state" "$watch_users" "$(cat "$tmp/members")"
+  exit 0
+fi
 threads=$(jq '.threads' "$tmp/review-state")
 viewed=$(jq '.viewed' "$tmp/review-state")
 wait "$members_pid"
