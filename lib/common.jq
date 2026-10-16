@@ -239,7 +239,7 @@ def approvalsCell($stats; $approvalThreshold; $showTeam):
 # reviewers' approvals meeting the threshold. "Approved (stale)" only fires
 # when fresh + stale approvers together meet the threshold; below threshold
 # even counting stale approvers, it's "Awaiting Approval".
-# Machine name behind approvalDecision's label; snapshot.jq reports it, so rewording a label can't change --json.
+# Machine name behind approvalDecision's label; json.jq reports it, so rewording a label can't change --json.
 def approvalVerdict($stats; $approvalThreshold):
   if $stats.changesRequested then "awaiting"
   elif $stats.count >= $approvalThreshold then "approved"

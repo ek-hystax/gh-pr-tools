@@ -173,7 +173,7 @@ fi
 wait "$review_pid"
 if [ "$json" = true ]; then
   wait "$members_pid"
-  print_snapshot todo "$prs" "$me" "$tmp/review-state" "$watch_users" "$(cat "$tmp/members")"
+  print_json todo "$prs" "$me" "$tmp/review-state" "$watch_users" "$(cat "$tmp/members")"
   exit 0
 fi
 threads=$(jq '.threads' "$tmp/review-state")

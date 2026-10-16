@@ -654,7 +654,7 @@ lib/
   init.sh               gh pr-tools init
   profile.sh            gh pr-tools profile
   prd.sh / prd.jq       gh pr-tools prd
-  snapshot.jq           the --json document for todo/mine
+  json.jq               the --json document for todo/mine
   todo.sh / todo.jq     gh pr-tools todo
   mine.sh / mine.jq     gh pr-tools mine
   track.sh / track.jq   gh pr-tools track

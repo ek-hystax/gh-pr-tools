@@ -1,7 +1,7 @@
 include "common";
 include "review-state";
 
-# Inputs (print_snapshot, common.sh): $command, $repo, $me, $review, $watchUsers, $teamMembers, $approvalThreshold
+# Inputs (print_json, common.sh): $command, $repo, $me, $review, $watchUsers, $teamMembers, $approvalThreshold
 
 def approval:
   .author.login as $a

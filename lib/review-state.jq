@@ -1,6 +1,6 @@
 # Request building and page merging for fetch_pr_review_state in common.sh
 # (included via `include "review-state";` with `jq -L "$dir"`), plus the
-# per-thread rules the bucket counts and snapshot.jq both read.
+# per-thread rules the bucket counts and json.jq both read.
 #
 # The state these defs pass between rounds is, per PR:
 #   {"<number>": {"threads": <conn>, "files": <conn> | null, "changedFiles": N | null}}

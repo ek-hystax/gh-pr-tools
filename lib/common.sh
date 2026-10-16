@@ -585,7 +585,7 @@ thread_watch_users() {
 # exactly. "mine" is never reduced that way: it is defined by author and is
 # what todo displays, so watching your own login duplicates that column rather
 # than cannibalizing it.
-# $5 = true (--json) also adds rich: {"<number>": {owners, nodes}} (thread details) for snapshot.jq.
+# $5 = true (--json) also adds rich: {"<number>": {owners, nodes}} (thread details) for json.jq.
 # Prints: {threads: {"<number>": {"mine":      {"total": N, "pending": P, "answered": A, "resolved": R},
 #                                 "unwatched": {"total": M, "pending": Q, "answered": B, "resolved": S},
 #                                 "watched":   {"<key>": {"total": ..., ...}},
@@ -1008,12 +1008,12 @@ reject_json_conflicts() {
 
 # Prints the --json document and nothing else. Args: command, PRs (JSON), login,
 # review-state file, watch users, team-members map.
-print_snapshot() {
+print_json() {
   jq -c -L "$dir" \
     --arg command "$1" --arg repo "$REPO" --arg me "$3" \
     --slurpfile review "$4" \
     --argjson watchUsers "$5" \
     --argjson teamMembers "$6" \
     --argjson approvalThreshold "${APPROVAL_THRESHOLD:-1}" \
-    -f "$dir/snapshot.jq" <<<"$2"
+    -f "$dir/json.jq" <<<"$2"
 }

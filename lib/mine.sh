@@ -122,7 +122,7 @@ prs=$(cat "$tmp"/search-* | jq -s 'add | unique_by(.number)')
 if [ "$json" = true ]; then
   watch_users=$(thread_watch_users)
   fetch_pr_review_state "$prs" "$me" threads "$watch_users" true > "$tmp/review-state"
-  print_snapshot mine "$prs" "$me" "$tmp/review-state" "$watch_users" '{}'
+  print_json mine "$prs" "$me" "$tmp/review-state" "$watch_users" '{}'
   exit 0
 fi
 
