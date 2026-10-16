@@ -429,7 +429,7 @@ Prints one JSON document instead of the table: the same PRs in the same order, e
            threadsTruncated, ... } ] }
 ```
 
-`threads` is `null` when a PR's thread lookup failed, `threadsTruncated` marks a cut at the 1,000-thread ceiling, and a thread whose comments were all deleted is omitted. New fields may appear without a version bump, so ignore unknown keys; a breaking change bumps `schemaVersion` (1 now). The machine-checked schema is `src/contract/snapshot.ts` in pr-tools-notifier, which consumes this output.
+`threads` is `null` when a PR's thread lookup failed, `threadsTruncated` marks a cut at the 1,000-thread ceiling, and a thread whose comments were all deleted is omitted. New fields may appear without a version bump, so ignore unknown keys; a breaking change bumps `schemaVersion` (1 now).
 
 It is one-shot: exit 0 means stdout is exactly one JSON document, and any failure exits non-zero with the reason on stderr and nothing on stdout. `--watch`, `--long`, `--short-links` and `--short-labels` are rejected with `--json`; `--include-drafts` and `mine --include-assigned` work as usual. The Jira and `mine` team-roster lookups are skipped.
 
