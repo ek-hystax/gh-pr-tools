@@ -178,8 +178,11 @@ def approverLogins($author):
 def teamApproverLogins($author; $teamLogins):
   [ approverLogins($author)[] | select(. as $l | $teamLogins | index($l) != null) ];
 
+def changesRequestedLogins($author):
+  [ latestReviews($author)[] | select(.state == "CHANGES_REQUESTED") | .author.login ];
+
 def hasChangesRequested($author):
-  [ latestReviews($author)[] | select(.state == "CHANGES_REQUESTED") ] | length > 0;
+  changesRequestedLogins($author) | length > 0;
 
 # Reviewers whose latest review is APPROVED but against an older commit —
 # the complement of approverLogins() (same reviews, opposite commit-oid
@@ -236,12 +239,17 @@ def approvalsCell($stats; $approvalThreshold; $showTeam):
 # reviewers' approvals meeting the threshold. "Approved (stale)" only fires
 # when fresh + stale approvers together meet the threshold; below threshold
 # even counting stale approvers, it's "Awaiting Approval".
-def approvalDecision($stats; $approvalThreshold):
-  if $stats.changesRequested then "Awaiting Approval"
-  elif $stats.count >= $approvalThreshold then "Approved"
-  elif $stats.staleCount > 0 and ($stats.count + $stats.staleCount) >= $approvalThreshold then "Approved (stale)"
-  else "Awaiting Approval"
+# Machine name behind approvalDecision's label; json.jq reports it, so rewording a label can't change --json.
+def approvalVerdict($stats; $approvalThreshold):
+  if $stats.changesRequested then "awaiting"
+  elif $stats.count >= $approvalThreshold then "approved"
+  elif $stats.staleCount > 0 and ($stats.count + $stats.staleCount) >= $approvalThreshold then "approved_stale"
+  else "awaiting"
   end;
+
+def approvalDecision($stats; $approvalThreshold):
+  approvalVerdict($stats; $approvalThreshold)
+  | {approved: "Approved", approved_stale: "Approved (stale)", awaiting: "Awaiting Approval"}[.];
 
 # STATUS cell for todo/mine: "Draft" in place of the approval decision when
 # the PR is a draft (only fetched under --include-drafts; missing reads as
@@ -466,3 +474,16 @@ def renderTable($rows; $cols; $headers; cells; paintCell):
         ]
       | join("  ")
     );
+
+def reviewBy($me):
+  [ .reviews[]? | select(.author.login == $me) ] | last;
+
+# Matches both a direct request (.login == $me) and a team request where
+# $me is a member of the requested team (.slug, resolved via $teamMembers).
+def requestedFrom($me; $teamMembers):
+  ([ .reviewRequests[]? | select(.login == $me) ] | length > 0)
+  or ([ .reviewRequests[]? | select(.slug) | (.slug | split("/") | last) ] as $teams
+      | any($teams[]; $teamMembers[.] // [] | index($me) != null));
+
+def isReviewer($me; $teamMembers):
+  (reviewBy($me) != null) or requestedFrom($me; $teamMembers);

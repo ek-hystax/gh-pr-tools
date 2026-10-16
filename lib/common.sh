@@ -585,6 +585,7 @@ thread_watch_users() {
 # exactly. "mine" is never reduced that way: it is defined by author and is
 # what todo displays, so watching your own login duplicates that column rather
 # than cannibalizing it.
+# $5 = true (--json) also adds rich: {"<number>": {owners, nodes}} (thread details) for json.jq.
 # Prints: {threads: {"<number>": {"mine":      {"total": N, "pending": P, "answered": A, "resolved": R},
 #                                 "unwatched": {"total": M, "pending": Q, "answered": B, "resolved": S},
 #                                 "watched":   {"<key>": {"total": ..., ...}},
@@ -600,7 +601,7 @@ review_state_max_pages=10
 review_state_max_aliases=50
 
 fetch_pr_review_state() {
-  local prs="$1" me="$2" want="${3:-all}" watch_users="${4:-[]}" want_viewed=true
+  local prs="$1" me="$2" want="${3:-all}" watch_users="${4:-[]}" rich="${5:-false}" want_viewed=true
   local empty='{"threads":{},"viewed":{}}' owner repo_name request response raw merged result
   if [ "$want" = "threads" ]; then
     want_viewed=false
@@ -610,8 +611,8 @@ fetch_pr_review_state() {
 
   # Every request body ({query, variables}) is built by one jq call and sent
   # with --input, so no query text or cursor passes through the shell.
-  request=$(jq -L "$dir" -c --arg owner "$owner" --arg repo "$repo_name" --argjson wantViewed "$want_viewed" \
-    'include "review-state"; if length == 0 then empty else firstRequest($owner; $repo; $wantViewed) end' \
+  request=$(jq -L "$dir" -c --arg owner "$owner" --arg repo "$repo_name" --argjson wantViewed "$want_viewed" --argjson rich "$rich" \
+    'include "review-state"; if length == 0 then empty else firstRequest($owner; $repo; $wantViewed; $rich) end' \
     <<<"$prs") || { echo "$empty"; return; }
   [ -n "$request" ] || { echo "$empty"; return; }
 
@@ -633,8 +634,8 @@ fetch_pr_review_state() {
   # alias holds which page.
   while :; do
     request=$(jq -L "$dir" -c --arg owner "$owner" --arg repo "$repo_name" \
-      --argjson max "$review_state_max_pages" --argjson aliases "$review_state_max_aliases" \
-      'include "review-state"; plan($max; $aliases) as $plan | if $plan == [] then empty else request($owner; $repo; $plan) end' \
+      --argjson max "$review_state_max_pages" --argjson aliases "$review_state_max_aliases" --argjson rich "$rich" \
+      'include "review-state"; plan($max; $aliases) as $plan | if $plan == [] then empty else request($owner; $repo; $plan; $rich) end' \
       <<<"$raw") || break
     [ -n "$request" ] || break
 
@@ -657,7 +658,7 @@ fetch_pr_review_state() {
   done
 
   result=$(jq -L "$dir" --arg me "$me" --argjson prs "$prs" --argjson wantViewed "$want_viewed" \
-       --argjson watch "$watch_users" '
+       --argjson watch "$watch_users" --argjson rich "$rich" '
         include "review-state";
 
         # This filter is a single-quoted shell string: an apostrophe anywhere
@@ -667,20 +668,11 @@ fetch_pr_review_state() {
         # whose reply is what makes an open thread "answered": the PR author,
         # and $me on a PR assigned to $me.
         def bucketStats($owners):
-          ([.[] | select(.isResolved)] | length) as $resolved
-          | [.[] | select(.isResolved | not)] as $open
-          | ([$open[] | select(.comments.totalCount > 1
-                               and ((.lastComments.nodes[0].author.login // "") as $l
-                                    | any($owners[]; . == $l)))] | length) as $answered
+          map(threadState($owners)) as $states
           | { total: length,
-              pending: (($open | length) - $answered),
-              answered: $answered,
-              resolved: $resolved };
-
-        # A thread belongs to whoever opened it. Matched case-insensitively so
-        # a profile spelling like "CodeRabbitAI" still lines up with the login
-        # GraphQL reports.
-        def openerKey: ((.comments.nodes[0].author.login // "") | ascii_downcase);
+              pending: ($states | map(select(. == "pending")) | length),
+              answered: ($states | map(select(. == "answered")) | length),
+              resolved: ($states | map(select(. == "resolved")) | length) };
 
         # Watched logins are taken out of "unwatched" so the watched columns
         # and the THREADS column in mine partition the threads rather than
@@ -727,6 +719,10 @@ fetch_pr_review_state() {
                     truncated: ($files | connTruncated) }
               )
             }) | from_entries) else {} end) }
+        + (if $rich
+           then {rich: (map({key: .key, value: {owners: ($owners[.key] // []), nodes: .value.threads.nodes}})
+                        | from_entries)}
+           else {} end)
       ' <<<"$raw") || result="$empty"
   echo "$result" | jq -e . >/dev/null 2>&1 || result="$empty"
   echo "$result"
@@ -995,4 +991,29 @@ fetch_threads_and_jira_statuses() {
   threads=$(fetch_pr_review_state "$prs" "$me" threads "$watch_users" | jq '.threads')
   wait "$jira_pid"
   jira_statuses=$(cat "$scratch/jira")
+}
+
+# --json is one-shot: reject the table and --watch options. Args: command, then flag=true|false pairs.
+reject_json_conflicts() {
+  local cmd="$1" pair bad=""
+  shift
+  for pair in "$@"; do
+    if [ "${pair#*=}" = true ]; then bad+="${bad:+, }${pair%%=*}"; fi
+  done
+  if [ -n "$bad" ]; then
+    echo "gh pr-tools $cmd: --json cannot be combined with $bad" >&2
+    exit 1
+  fi
+}
+
+# Prints the --json document and nothing else. Args: command, PRs (JSON), login,
+# review-state file, watch users, team-members map.
+print_json() {
+  jq -c -L "$dir" \
+    --arg command "$1" --arg repo "$REPO" --arg me "$3" \
+    --slurpfile review "$4" \
+    --argjson watchUsers "$5" \
+    --argjson teamMembers "$6" \
+    --argjson approvalThreshold "${APPROVAL_THRESHOLD:-1}" \
+    -f "$dir/json.jq" <<<"$2"
 }

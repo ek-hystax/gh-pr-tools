@@ -298,7 +298,7 @@ gh pr-tools -p work prd 886
 ### `todo` — PRs you're reviewing
 
 ```text
-gh pr-tools todo [--long] [--short-links] [--short-labels] [--include-drafts] [--watch[=INTERVAL]]
+gh pr-tools todo [--long] [--short-links] [--short-labels] [--include-drafts] [--json] [--watch[=INTERVAL]]
 ```
 
 Lists open PRs where you're an actual reviewer — currently requested, or you've left any review, including ones you've already approved. By default shows a compact table (title, linked PR URL, author, status, your review state, approvals, review threads, viewed-file progress, whether new changes landed since your review, how long it's been in its current state, and the Jira ticket with its status); pass `--long` for all columns, adding last-updated, age, size, CI, and merge status.
@@ -338,7 +338,7 @@ The `PENDING SINCE` column is color-graded by how long the PR has been in its cu
 ### `mine` — your own open PRs
 
 ```text
-gh pr-tools mine [--long] [--short-links] [--short-labels] [--include-drafts] [--include-assigned] [--watch[=INTERVAL]]
+gh pr-tools mine [--long] [--short-links] [--short-labels] [--include-drafts] [--include-assigned] [--json] [--watch[=INTERVAL]]
 ```
 
 Lists your own open PRs with the columns you need to triage them: title, linked PR URL, review status (Approved / Approved (stale) / Awaiting Approval), review threads, how long it's been pending (`PENDING SINCE`, same color grading as `todo`), number of approvals, CI status, and the Jira ticket with its status (same branch-name convention as `todo`). Pass `--long` to add age, size, and merge status.
@@ -409,7 +409,29 @@ gh pr-tools -p work mine
 
 Review-thread stats aren't exposed by GitHub's `--json` convenience fields, so `mine`, `todo` and `track` each make one extra GraphQL call to fetch them — a single batched request covering every listed PR at once, not one call per PR, so it stays fast regardless of how many PRs you have open. That request takes the first 100 threads per PR, resolved ones included, and for `todo` the first 100 changed files. A PR with more than that gets its remaining pages in follow-up requests, batched the same way across PRs. Threads take one extra round trip per further 100 threads on the largest PR. Files usually take one extra round trip in total, however many there are, because every remaining page of files can be asked for at once. A run where no PR is past its first page makes no extra request. Counting stops at 1,000 threads (and 1,000 files) per PR. If a PR has more than that, or one of its follow-up pages fails to load, the totals are suffixed with `+` — `1000+ (3 pending, 997 resolved)` — so an incomplete count reads as incomplete rather than as a wrong number. A bucket can be empty and still truncated, which prints `0+` rather than `-`.
 
-All three also only request the PR fields their current column set needs. `gh` resolves a whole `--json` set in one request per page, but selections like `mergeable`, `mergeStateStatus` and `statusCheckRollup` are computed per PR on GitHub's side, so asking for them multiplies the work the server does before it answers — a 150-row page goes from about a second to about ten. That is why `--long` is noticeably slower than the default view.
+All three also only request the PR fields their current column set needs. `gh` resolves a whole `--json` set in one request per page, but selections like `mergeable`, `mergeStateStatus` and `statusCheckRollup` are computed per PR on GitHub's side, so asking for them multiplies the work the server does before it answers — a 150-row page goes from about a second to about ten. That is why `--long` is noticeably slower than the default view, and so is `mine --json`, which also asks for `mergeStateStatus`.
+
+#### `--json` — machine-readable output for `todo` and `mine`
+
+```bash
+gh pr-tools -p work mine --json
+gh pr-tools -p work todo --json
+```
+
+Prints one JSON document instead of the table: the same PRs in the same order, each with its reviews, the approval verdict (against `APPROVAL_THRESHOLD`) and its review threads. `mine` lists every thread and adds `ci` (state, plus the failed checks as `workflow / job`), `mergeState` (GitHub's merge state, lowercased; `dirty` means conflicts) and `pendingReviewers` (users and teams whose review is still requested). `todo` lists only the threads you opened and adds `requestedFromMe`.
+
+```text
+{ schemaVersion, command, generatedAt, repo, viewer,
+  prs: [ { number, url, title, branch, author, isDraft, createdAt, updatedAt, headOid,
+           reviews: [ { id, author, state, submittedAt, commitOid } ],
+           approval: { threshold, approvers, staleApprovers, changesRequestedBy, decision },
+           threads: [ { id, state, opener, lastAuthor, watched, commentCount, path, url, lastCommentAt, excerpt } ] | null,
+           threadsTruncated, ... } ] }
+```
+
+`threads` is `null` when a PR's thread lookup failed, `threadsTruncated` marks a cut at the 1,000-thread ceiling, and a thread whose comments were all deleted is omitted. New fields may appear without a version bump, so ignore unknown keys; a breaking change bumps `schemaVersion` (1 now).
+
+It is one-shot: exit 0 means stdout is exactly one JSON document, and any failure exits non-zero with the reason on stderr and nothing on stdout. `--watch`, `--long`, `--short-links` and `--short-labels` are rejected with `--json`; `--include-drafts` and `mine --include-assigned` work as usual. The Jira and `mine` team-roster lookups are skipped.
 
 ### `track` — a board for a set of PRs
 
@@ -632,6 +654,7 @@ lib/
   init.sh               gh pr-tools init
   profile.sh            gh pr-tools profile
   prd.sh / prd.jq       gh pr-tools prd
+  json.jq               the --json document for todo/mine
   todo.sh / todo.jq     gh pr-tools todo
   mine.sh / mine.jq     gh pr-tools mine
   track.sh / track.jq   gh pr-tools track

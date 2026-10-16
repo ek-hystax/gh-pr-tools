@@ -1,6 +1,6 @@
 # Request building and page merging for fetch_pr_review_state in common.sh
-# (included via `include "review-state";` with `jq -L "$dir"`). The counting
-# rules stay in common.sh; everything here only moves pages around.
+# (included via `include "review-state";` with `jq -L "$dir"`), plus the
+# per-thread rules the bucket counts and json.jq both read.
 #
 # The state these defs pass between rounds is, per PR:
 #   {"<number>": {"threads": <conn>, "files": <conn> | null, "changedFiles": N | null}}
@@ -8,8 +8,24 @@
 # also carries "offsets" (see offsetCursor). files is null when the caller
 # did not ask for it or its first page came back without nodes.
 
-def threadSel:
-  "pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:1){totalCount nodes{author{login}}} lastComments: comments(last:1){nodes{author{login}}}}";
+# $rich adds the per-thread fields --json reports; false leaves the tables' query text as it was.
+def threadSel($rich):
+  if $rich
+  then "pageInfo{hasNextPage endCursor} nodes{id path isResolved comments(first:1){totalCount nodes{author{login}}} lastComments: comments(last:1){nodes{author{login} url createdAt bodyText}}}"
+  else "pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:1){totalCount nodes{author{login}}} lastComments: comments(last:1){nodes{author{login}}}}"
+  end;
+
+# $owners: logins whose reply makes an open thread "answered" (see fetch_pr_review_state).
+def threadState($owners):
+  if .isResolved then "resolved"
+  elif .comments.totalCount > 1
+       and ((.lastComments.nodes[0].author.login // "") as $l | any($owners[]; . == $l))
+  then "answered"
+  else "pending"
+  end;
+
+# Lowercased, so a profile spelling like "CodeRabbitAI" matches the login GraphQL reports.
+def openerKey: ((.comments.nodes[0].author.login // "") | ascii_downcase);
 
 def fileSel: "pageInfo{hasNextPage endCursor} nodes{viewerViewedState}";
 
@@ -30,9 +46,9 @@ def pageOk: (.nodes | type) == "array";
 
 def conn: {nodes, hasNext: (.pageInfo.hasNextPage // false), cursor: .pageInfo.endCursor, pages: 1, failed: false};
 
-def firstRequest($owner; $repo; $wantViewed):
+def firstRequest($owner; $repo; $wantViewed; $rich):
   { query: ("query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){"
-            + (map("pr\(.number):pullRequest(number:\(.number)){reviewThreads(first:100){\(threadSel)}"
+            + (map("pr\(.number):pullRequest(number:\(.number)){reviewThreads(first:100){\(threadSel($rich))}"
                    + (if $wantViewed then " changedFiles files(first:100){\(fileSel)}" else "" end)
                    + "}")
                | join(" "))
@@ -85,14 +101,14 @@ def plan($maxPages; $maxAliases):
   | map(.value + {var: "c\(.key)"});
 
 # Cursors go in as variables rather than query text.
-def request($owner; $repo; $plan):
+def request($owner; $repo; $plan; $rich):
   { query: ("query($owner:String!,$repo:String!"
             + ($plan | map(",$\(.var):String!") | join(""))
             + "){repository(owner:$owner,name:$repo){"
             + ($plan
                | map("\(.alias):pullRequest(number:\(.num)){"
                      + (if .conn == "threads"
-                        then "reviewThreads(first:100,after:$\(.var)){\(threadSel)}"
+                        then "reviewThreads(first:100,after:$\(.var)){\(threadSel($rich))}"
                         else "files(first:100,after:$\(.var)){\(fileSel)}" end)
                      + "}")
                | join(" "))
