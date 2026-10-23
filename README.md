@@ -259,6 +259,7 @@ as-is; re-run `init` only when you want ticket status too.
 | Show a Jira link in `todo` output                        | Ticket key in the **branch name** (title alone is not enough for `todo`)                  |
 | Show a Jira link in `mine` output                        | Ticket key in the **branch name** (same convention as `todo`)                             |
 | Show a Jira link in `track` output                       | Ticket key in the **branch name or title** (same convention as `prd`)                     |
+| Report the ticket in `mine --json`                       | Ticket key in the **branch name** (same convention as `mine`); its status needs a token   |
 | Show a ticket's Jira **status**                          | Same as the link, plus a token — see [Jira token](#jira-token)                             |
 
 Ticket shape is `PREFIX-123`. If you set a Jira prefix at init (e.g. `KF`), only that prefix matches; leave it blank to accept any `PROJECT-123`-style key.
@@ -418,7 +419,7 @@ gh pr-tools -p work mine --json
 gh pr-tools -p work todo --json
 ```
 
-Prints one JSON document instead of the table: the same PRs in the same order, each with its reviews, the approval verdict (against `APPROVAL_THRESHOLD`) and its review threads. `mine` lists every thread and adds `ci` (state, plus the failed checks as `workflow / job`), `mergeState` (GitHub's merge state, lowercased; `dirty` means conflicts) and `pendingReviewers` (users and teams whose review is still requested). `todo` lists only the threads you opened and adds `requestedFromMe`.
+Prints one JSON document instead of the table: the same PRs in the same order, each with its reviews, the approval verdict (against `APPROVAL_THRESHOLD`) and its review threads. `mine` lists every thread and adds `ci` (state, plus the failed checks as `workflow / job`), `mergeState` (GitHub's merge state, lowercased; `dirty` means conflicts), `pendingReviewers` (users and teams whose review is still requested) and `jira` (the ticket named by the branch, with its status). `todo` lists only the threads you opened and adds `requestedFromMe`.
 
 ```text
 { schemaVersion, command, generatedAt, repo, viewer,
@@ -427,11 +428,16 @@ Prints one JSON document instead of the table: the same PRs in the same order, e
            approval: { threshold, approvers, staleApprovers, changesRequestedBy, decision },
            threads: [ { id, state, opener, lastAuthor, watched, commentCount, path, url, lastCommentAt, excerpt } ] | null,
            threadsTruncated, ... } ] }
+
+mine adds: ci: { state, failedJobs }, mergeState, pendingReviewers,
+           jira: { key, url, status } | null
 ```
+
+`jira` is `null` when the branch name holds no ticket key (the same rule as the `JIRA` column). Otherwise `url` is `null` without a Jira site in the profile, and `status` is `null` without a [Jira token](#jira-token), when the lookup failed, or when the account cannot see the ticket. A rejected token still prints its line on stderr.
 
 `threads` is `null` when a PR's thread lookup failed, `threadsTruncated` marks a cut at the 1,000-thread ceiling, and a thread whose comments were all deleted is omitted. New fields may appear without a version bump, so ignore unknown keys; a breaking change bumps `schemaVersion` (1 now).
 
-It is one-shot: exit 0 means stdout is exactly one JSON document, and any failure exits non-zero with the reason on stderr and nothing on stdout. `--watch`, `--long`, `--short-links` and `--short-labels` are rejected with `--json`; `--include-drafts` and `mine --include-assigned` work as usual. The Jira and `mine` team-roster lookups are skipped.
+It is one-shot: exit 0 means stdout is exactly one JSON document, and any failure exits non-zero with the reason on stderr and nothing on stdout. `--watch`, `--long`, `--short-links` and `--short-labels` are rejected with `--json`; `--include-drafts` and `mine --include-assigned` work as usual. `mine --json` looks the ticket statuses up like the table does, in one request next to the thread lookup; `todo --json` and the `mine` team-roster lookup are skipped.
 
 ### `track` — a board for a set of PRs
 

@@ -952,6 +952,20 @@ fetch_jira_statuses() {
   echo "$result"
 }
 
+# The upper-cased ticket keys a list of PRs mentions, as a sorted JSON array
+# without repeats. Args: $1 = JSON array of PRs, $2 = the common.jq key
+# extractor the caller's JIRA column uses (jiraKeyFromBranch or
+# jiraKeyFromBranchOrTitle). Needs $ticket_pattern and $dir, like resolve_pr.
+jira_ticket_keys() {
+  local prs="$1" extractor="$2"
+  case "$extractor" in
+    jiraKeyFromBranch|jiraKeyFromBranchOrTitle) ;;
+    *) echo "gh pr-tools: unknown Jira key extractor '$extractor'" >&2; return 1 ;;
+  esac
+  jq -L "$dir" -c --arg jiraPattern "$ticket_pattern" \
+    "include \"common\"; [.[] | ${extractor}(\$jiraPattern) | select(. != null)] | unique" <<<"$prs"
+}
+
 # The per-PR lookups mine and track both run once their PR list is in hand:
 # Jira statuses for the tickets the list mentions, and review-thread stats in
 # the threads-only shape (neither command has a VIEWED column, and the lookup
@@ -976,12 +990,7 @@ fetch_jira_statuses() {
 # and jira_statuses (fetch_jira_statuses).
 fetch_threads_and_jira_statuses() {
   local prs="$1" me="$2" extractor="$3" scratch="$4" keys jira_pid
-  case "$extractor" in
-    jiraKeyFromBranch|jiraKeyFromBranchOrTitle) ;;
-    *) echo "gh pr-tools: unknown Jira key extractor '$extractor'" >&2; return 1 ;;
-  esac
-  keys=$(jq -L "$dir" -c --arg jiraPattern "$ticket_pattern" \
-    "include \"common\"; [.[] | ${extractor}(\$jiraPattern) | select(. != null)] | unique" <<<"$prs")
+  keys=$(jira_ticket_keys "$prs" "$extractor") || return 1
 
   # Independent of the thread lookup, so the two round trips overlap.
   fetch_jira_statuses "$keys" > "$scratch/jira" &
@@ -1007,13 +1016,19 @@ reject_json_conflicts() {
 }
 
 # Prints the --json document and nothing else. Args: command, PRs (JSON), login,
-# review-state file, watch users, team-members map.
+# review-state file, watch users, team-members map, and (mine only) the
+# fetch_jira_statuses map.
 print_json() {
+  local statuses_json="${7:-}"
+  [ -n "$statuses_json" ] || statuses_json='{}'
   jq -c -L "$dir" \
     --arg command "$1" --arg repo "$REPO" --arg me "$3" \
     --slurpfile review "$4" \
     --argjson watchUsers "$5" \
     --argjson teamMembers "$6" \
+    --argjson jiraStatuses "$statuses_json" \
+    --arg jiraBase "${JIRA_BASE_URL:-}" \
+    --arg jiraPattern "${ticket_pattern:-}" \
     --argjson approvalThreshold "${APPROVAL_THRESHOLD:-1}" \
     -f "$dir/json.jq" <<<"$2"
 }
