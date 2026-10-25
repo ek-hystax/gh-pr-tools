@@ -86,6 +86,16 @@ def jiraKeyFromBranch($jiraPattern):
 def jiraKeyFromBranchOrTitle($jiraPattern):
   jiraKey($jiraPattern; "\(.headRefName // "") \(.title // "")");
 
+# track's row order: with explicit PR references, the order they were given in
+# (a list someone typed out is usually a merge order, and re-sorting it would
+# throw that away); with none ($order empty), oldest-first like todo and mine.
+def trackOrder($order):
+  if ($order | length) > 0 then
+    ($order | to_entries | map({key: (.value | tostring), value: .key}) | from_entries) as $pos
+    | sort_by($pos[.number | tostring] // 0)
+  else sort_by(.createdAt)
+  end;
+
 def jiraUrl($jiraBase; $key):
   if $jiraBase == "" or $key == null then "-" else "\($jiraBase)/\($key)" end;
 

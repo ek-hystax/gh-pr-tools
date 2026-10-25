@@ -139,16 +139,8 @@ def cols:
   | ($base | index("THREADS")) as $i
   | $base[0:$i + 1] + watchCols + $base[$i + 1:];
 
-# With explicit PR references, the order they were given in is the order they
-# are shown in: a list someone typed out is usually a merge order, and
-# re-sorting it would throw that away. $order is empty for the unfiltered
-# listing, which falls back to oldest-first like todo and mine.
-def orderRows:
-  if ($order | length) > 0 then
-    ($order | to_entries | map({key: (.value | tostring), value: .key}) | from_entries) as $pos
-    | sort_by($pos[.number | tostring] // 0)
-  else sort_by(.createdAt)
-  end;
+# Named PRs in the order given, otherwise oldest-first — see trackOrder in common.jq.
+def orderRows: trackOrder($order);
 
 # Main
 #
