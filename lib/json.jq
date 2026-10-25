@@ -65,10 +65,10 @@ def mergeStateOut:
 def pendingReviewersOut:
   [ (.reviewRequests // [])[] | (.login // .name) | select(type == "string" and . != "") ] | uniqKeepOrder | .[0:20];
 
-# The ticket named by the branch. null = no ticket key; status null = no token, a failed lookup or an issue
-# this account cannot see; url null = no Jira site in the profile.
+# The ticket named by the branch, or else by the title. null = no ticket key in either; status null = no token,
+# a failed lookup or an issue this account cannot see; url null = no Jira site in the profile.
 def jiraOut:
-  jiraKeyFromBranch($jiraPattern) as $key
+  jiraKeyFromBranchOrTitle($jiraPattern) as $key
   | if $key == null then null
     else { key: $key,
            url: (if $jiraBase == "" then null else "\($jiraBase)/\($key)" end),
