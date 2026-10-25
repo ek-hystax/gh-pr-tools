@@ -3,16 +3,10 @@
 # followed by one line per failed check name.
 # Known limitation: a PR with no CI checks configured stays "pending" forever.
 
-# Rollup entries are CheckRuns (status/conclusion) or StatusContexts (state only).
-def ciFail($c):
-  ($c.conclusion | IN("FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"))
-  or ($c.state | IN("ERROR", "FAILURE"));
-def ciPending($c):
-  ($c.status | IN("IN_PROGRESS", "QUEUED", "PENDING", "REQUESTED", "WAITING"))
-  or ($c.status == "COMPLETED" and $c.conclusion == null)
-  or ($c.state | IN("PENDING", "EXPECTED"));
+include "common";
 
-(.statusCheckRollup // []) as $checks
+# ciFail, ciPending and latestChecks (a check that ran twice counts by its latest run) come from common.jq.
+latestChecks as $checks
 | ($checks | length) as $total
 | ($checks | map(select(ciFail(.))) | length) as $failed
 | ($checks | map(select(ciPending(.))) | length) as $pending

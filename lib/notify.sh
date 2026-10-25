@@ -36,7 +36,7 @@ notify_mac() { # $1 title, $2 message, $3 sound
 while :; do
   json=$(gh pr view "$pr" --repo "$REPO" --json statusCheckRollup)
   # First line: "STATE\tHUMAN STATUS"; on fail, the rest is one failed check name per line.
-  out=$(jq -r -f "$dir/notify.jq" <<<"$json")
+  out=$(jq -r -L "$dir" -f "$dir/notify.jq" <<<"$json")
   first="${out%%$'\n'*}"
   IFS=$'\t' read -r state line <<<"$first"
   printf '\r\033[K[%s] %s' "$(date +%H:%M:%S)" "$line"
