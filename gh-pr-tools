@@ -23,9 +23,10 @@ commands:
                                     list open PRs you're a reviewer on (--watch default: 5m)
   mine [--long] [--short-links] [--short-labels] [--include-drafts] [--include-assigned] [--json] [--watch[=INTERVAL]]
                                     list your own open PRs; --include-assigned adds ones assigned to you (--watch default: 5m)
-  track [--long] [--short-links] [--short-labels] [--limit N] [--list FILE] [--json] [--watch[=INTERVAL]] [PR...]
+  track [--long] [--short-links] [--short-labels] [--limit N] [--list FILE] [--json] [--watch[=INTERVAL]] [PR|TICKET...]
                                     the repo's open PRs incl. drafts (oldest --limit, default 50), or
-                                    just the ones you name by number or GitHub PR link (any state);
+                                    just the ones you name by number, GitHub PR link or Jira ticket
+                                    (any state; a ticket is every PR whose title names it);
                                     --list reads them from a file, re-read each refresh (--watch default: 5m)
   stale-branches [--limit N] [--author LOGIN|--all]
                                     closed PRs whose head branch still exists (default: your own; --author for someone else's, --all for the whole repo)

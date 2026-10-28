@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # gh pr-tools track — the repo's open PRs (up to --limit), or just the ones
-# you name.
+# you name, by number or by Jira ticket.
 set -euo pipefail
 
 dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,12 +37,12 @@ usage_err() {
 # changes what a line means. Blank lines are skipped. A line starting with "#"
 # is a comment unless a digit follows the "#" directly: "#1154" is how people
 # write a PR, and a list is exactly where they write it. Anything that starts
-# out as a reference stays one — "#1204 note here" reaches ref_to_number and
+# out as a reference stays one — "#1204 note here" reaches ref_to_entry and
 # gets its "skipped" warning, the same as "1204 note here" would, rather than
 # vanishing as a comment. Past the first word, a "#" after whitespace starts a
 # trailing comment. A "#" with no whitespace before it is left alone, which is
 # why a URL copied out of a review thread keeps its "#discussion_r..."
-# fragment; that is harmless, since ref_to_number reads only the
+# fragment; that is harmless, since ref_to_entry reads only the
 # <owner>/<repo>/pull/<n> part of a link. A trailing CR is dropped so a file
 # written on Windows works, and a UTF-8 byte-order mark (which some Windows
 # editors put at the start of the file) so it does not glue onto the first
@@ -142,11 +142,33 @@ fi
 load_config
 
 ticket_pattern="${JIRA_PREFIX:-[A-Za-z]+}-[0-9]+"
+ticket_pattern_upper=$(tr '[:lower:]' '[:upper:]' <<<"$ticket_pattern")
 
-# Turn one PR argument into a bare number. Two forms are accepted: a plain
-# number, and a GitHub PR link.
+# A ticket reference: a key (KF-1824, any case) or a Jira link to one — a
+# browse link's last path segment, or a board link's selectedIssue. Prints
+# the key upper-cased, the form Jira and the branch/title matching use.
+ref_ticket() {
+  local ref="$1" selected='[?&]selectedIssue=([^&#]+)'
+  if [[ "$ref" =~ ^https?:// ]]; then
+    if [[ "$ref" =~ $selected ]]; then
+      ref="${BASH_REMATCH[1]}"
+    else
+      ref="${ref%%\?*}"
+      ref="${ref%%#*}"
+      ref="${ref%/}"
+      ref="${ref##*/}"
+    fi
+  fi
+  ref=$(tr '[:lower:]' '[:upper:]' <<<"$ref")
+  [[ "$ref" =~ ^${ticket_pattern_upper}$ ]] || return 1
+  printf '%s\n' "$ref"
+}
+
+# Turn one argument into "n:<number>" for a PR or "t:<KEY>" for a ticket.
+# Three forms are accepted: a plain number, a GitHub PR link, and a ticket
+# (see ref_ticket).
 #
-# Either way the number is normalised before it goes anywhere: "0160" is a
+# For a number or a link, the number is normalised before it goes anywhere: "0160" is a
 # perfectly natural thing to type or to find in a spreadsheet export, but
 # spliced into the GraphQL query it is not an Int literal, and the syntax
 # error fails the whole batch — one zero-padded entry would blank every row.
@@ -167,8 +189,8 @@ ticket_pattern="${JIRA_PREFIX:-[A-Za-z]+}-[0-9]+"
 # this one and be displayed as though it were the PR that was asked for.
 # Wrong data presented confidently is worse than an error, so a mismatch is
 # refused.
-ref_to_number() {
-  local ref="$1" owner_repo num
+ref_to_entry() {
+  local ref="$1" owner_repo num ticket
   # "#1154" is how people write a PR reference, and it is what a list file
   # tends to contain; the bare number is the same thing.
   ref="${ref#\#}"
@@ -181,8 +203,11 @@ ref_to_number() {
       echo "gh pr-tools track: $ref points at $owner_repo, not $REPO — skipped" >&2
       return 1
     fi
+  elif ticket=$(ref_ticket "$ref"); then
+    printf 't:%s\n' "$ticket"
+    return 0
   else
-    echo "gh pr-tools track: '$ref' is not a PR number or a GitHub PR link — skipped" >&2
+    echo "gh pr-tools track: '$ref' is not a PR number, a GitHub PR link or a ticket — skipped" >&2
     return 1
   fi
   # Leading zeros are allowed, but at most ten significant digits: the range
@@ -193,21 +218,62 @@ ref_to_number() {
     echo "gh pr-tools track: '$ref' is not a valid PR number — skipped" >&2
     return 1
   fi
-  printf '%s\n' "$((10#$num))"
+  printf 'n:%s\n' "$((10#$num))"
+}
+
+# The PRs each named ticket has, oldest first: {"KF-1824": [1187, 1281]}, in
+# one GraphQL request with a search alias per ticket. Search matches title
+# words loosely (KF-1824 also finds a title with KF and 1824 apart), so a hit
+# counts only when the key is a whole word of its title or branch. A PR that
+# names its ticket in the branch alone is not found: search does not look
+# inside branch names (head: matches their start only). Merged and closed PRs are included, like a PR named
+# by number, up to 100 per ticket (a line on stderr says when there are
+# more). A failed search fails the command, since a ticket shown without its
+# PRs would look as if it had none.
+# Args: $1 = JSON array of upper-cased keys. Needs $tmp.
+fetch_ticket_prs() {
+  local tickets="$1" request result
+  request=$(jq -c --arg repo "$REPO" '
+    {query: ("query{"
+      + (to_entries
+         | map("t\(.key):search(type:ISSUE,first:100,query:\("repo:\($repo) is:pr in:title \(.value)" | tojson)){issueCount nodes{...on PullRequest{number title headRefName}}}")
+         | join(" "))
+      + "}")}' <<<"$tickets")
+  result=$(gh api graphql --input - <<<"$request" 2>"$tmp/ticket-search.err") || true
+  jq -c --argjson tickets "$tickets" '
+    .data as $d
+    | if $d == null or any(range(0; $tickets | length); $d["t\(.)"] == null) then error("search failed") else . end
+    | [ range(0; $tickets | length) as $i
+        | $tickets[$i] as $key
+        | { key: $key,
+            value: ([ $d["t\($i)"].nodes[]
+                      | select(.number != null)
+                      | select("\(.headRefName // "") \(.title // "")" | test("(^|[^A-Za-z0-9])" + $key + "($|[^0-9])"; "i"))
+                      | .number ] | unique) } ]
+    | from_entries' <<<"$result" 2>/dev/null || {
+    echo "gh pr-tools track: could not look up the PRs of $(jq -r 'join(", ")' <<<"$tickets")" >&2
+    sed 's/^/  /' "$tmp/ticket-search.err" >&2
+    return 1
+  }
+  jq -r --argjson tickets "$tickets" '
+    range(0; $tickets | length) as $i
+    | select(.data["t\($i)"].issueCount > 100)
+    | "gh pr-tools track: more than 100 PRs match \($tickets[$i]); showing the first 100"' <<<"$result" >&2
 }
 
 # One bad reference must not cost you the other nineteen rows, so an argument
 # that cannot be resolved warns on stderr and is dropped; stdout stays a
 # clean, pipeable table. Duplicates are dropped on first occurrence, keeping
 # the order they were given in.
-numbers=()
+# Entries hold no spaces, so " a b " is the set of those seen.
+entries=()
+tickets=()
+seen_entries=" "
 for ref in "${refs[@]+"${refs[@]}"}"; do
-  if n=$(ref_to_number "$ref"); then
-    seen=false
-    for existing in "${numbers[@]+"${numbers[@]}"}"; do
-      if [ "$existing" = "$n" ]; then seen=true; break; fi
-    done
-    if [ "$seen" = false ]; then numbers+=("$n"); fi
+  if entry=$(ref_to_entry "$ref") && [[ "$seen_entries" != *" $entry "* ]]; then
+    seen_entries+="$entry "
+    entries+=("$entry")
+    if [[ "$entry" == t:* ]]; then tickets+=("${entry#t:}"); fi
   fi
 done
 
@@ -221,13 +287,37 @@ done
 filtered=false
 if [ "$list_given" = true ] || [ "${#refs[@]}" -gt 0 ]; then filtered=true; fi
 
-if [ "$filtered" = true ] && [ "${#numbers[@]}" -eq 0 ] && [ "$list_given" != true ]; then
-  echo "gh pr-tools track: no usable PR references" >&2
+if [ "$filtered" = true ] && [ "${#entries[@]}" -eq 0 ] && [ "$list_given" != true ]; then
+  echo "gh pr-tools track: no usable PR or ticket references" >&2
   exit 1
 fi
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+
+# A ticket stands for its PRs, oldest first, at the place it was named.
+tickets_json='[]'
+ticket_prs='{}'
+if [ "${#tickets[@]}" -gt 0 ]; then
+  tickets_json=$(printf '%s\n' "${tickets[@]}" | jq -R . | jq -sc .)
+  ticket_prs=$(fetch_ticket_prs "$tickets_json")
+fi
+numbers=()
+seen_numbers=" "
+for entry in "${entries[@]+"${entries[@]}"}"; do
+  case "$entry" in
+    n:*) found="${entry#n:}" ;;
+    t:*)
+      found=$(jq -r --arg key "${entry#t:}" '.[$key][]' <<<"$ticket_prs")
+      if [ -z "$found" ] && [ "$json" != true ]; then
+        echo "gh pr-tools track: no PR mentions ${entry#t:} yet" >&2
+      fi
+      ;;
+  esac
+  for n in $found; do
+    if [[ "$seen_numbers" != *" $n "* ]]; then seen_numbers+="$n "; numbers+=("$n"); fi
+  done
+done
 
 if [ "${#numbers[@]}" -gt 0 ]; then
   # Explicit references bypass every filter the unfiltered listing applies:
@@ -241,7 +331,7 @@ if [ "${#numbers[@]}" -gt 0 ]; then
     [ -n "$n" ] || continue
     echo "gh pr-tools track: no PR #$n in $REPO — skipped" >&2
   done <<<"$(jq -r --argjson want "$order" '([.[].number]) as $got | ($want - $got)[]' <<<"$prs")"
-  if [ "$list_given" != true ] && [ "$(jq 'length' <<<"$prs")" -eq 0 ]; then
+  if [ "$list_given" != true ] && [ "${#tickets[@]}" -eq 0 ] && [ "$(jq 'length' <<<"$prs")" -eq 0 ]; then
     echo "gh pr-tools track: none of the named PRs exist in $REPO" >&2
     exit 1
   fi
@@ -284,14 +374,17 @@ fi
 # --json: the mine --json lookups (rich threads, ticket statuses), PRs in the order the table shows them.
 if [ "$json" = true ]; then
   me="${GH_USERNAME:-$(gh api user --jq .login)}"
-  keys=$(jira_ticket_keys "$prs" jiraKeyFromBranchOrTitle)
+  keys=$(jira_ticket_keys "$prs" jiraKeyFromBranchOrTitle | jq -c --argjson named "$tickets_json" '. + $named | unique')
   fetch_jira_statuses "$keys" > "$tmp/jira" &
   jira_pid=$!
   watch_users=$(thread_watch_users)
   fetch_pr_review_state "$prs" "" threads "$watch_users" true > "$tmp/review-state"
   wait "$jira_pid"
   prs=$(jq -L "$dir" -c --argjson order "$order" 'include "common"; trackOrder($order)' <<<"$prs")
-  print_json track "$prs" "$me" "$tmp/review-state" "$watch_users" '{}' "$(cat "$tmp/jira")"
+  # Only PRs the document carries: one the search found but the fetch did not return is left out.
+  tickets_json=$(jq -c --argjson prs "$ticket_prs" --argjson got "$(jq -c '[.[].number]' <<<"$prs")" \
+    'map({key: ., prs: [($prs[.] // [])[] | select(IN($got[]))]})' <<<"$tickets_json")
+  print_json track "$prs" "$me" "$tmp/review-state" "$watch_users" '{}' "$(cat "$tmp/jira")" "$tickets_json"
   exit 0
 fi
 

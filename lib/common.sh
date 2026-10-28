@@ -1034,17 +1034,19 @@ reject_json_conflicts() {
 }
 
 # Prints the --json document and nothing else. Args: command, PRs (JSON), login,
-# review-state file, watch users, team-members map, and (mine only) the
-# fetch_jira_statuses map.
+# review-state file, watch users, team-members map, (mine and track) the
+# fetch_jira_statuses map and (track) the named tickets as [{key, prs}].
 print_json() {
-  local statuses_json="${7:-}"
+  local statuses_json="${7:-}" tickets_json="${8:-}"
   [ -n "$statuses_json" ] || statuses_json='{}'
+  [ -n "$tickets_json" ] || tickets_json='[]'
   jq -c -L "$dir" \
     --arg command "$1" --arg repo "$REPO" --arg me "$3" \
     --slurpfile review "$4" \
     --argjson watchUsers "$5" \
     --argjson teamMembers "$6" \
     --argjson jiraStatuses "$statuses_json" \
+    --argjson tickets "$tickets_json" \
     --arg jiraBase "${JIRA_BASE_URL:-}" \
     --arg jiraPattern "${ticket_pattern:-}" \
     --argjson approvalThreshold "${APPROVAL_THRESHOLD:-1}" \

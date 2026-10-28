@@ -5,7 +5,7 @@ A [gh](https://cli.github.com/) extension for PR review triage.
 - `prd` — who has approved a PR, and who still needs to
 - `todo` — open PRs you're a reviewer on (whether or not you've already approved), including the threads you started split by pending / answered / resolved, and viewed-file progress
 - `mine` — your own open PRs: review status, approvals, every open thread on them — yours as well as reviewers' — split by pending / answered / resolved, CI
-- `track` — the repo's open PRs, drafts included (the oldest 50 by default), or just the ones you name (or keep in a file, re-read on every `--watch` refresh): state, approvals, threads, CI, Jira. Nobody's queue in particular — built for following a set of PRs toward a release
+- `track` — the repo's open PRs, drafts included (the oldest 50 by default), or just the ones you name by number or Jira ticket (or keep in a file, re-read on every `--watch` refresh): state, approvals, threads, CI, Jira. Nobody's queue in particular — built for following a set of PRs toward a release
 - `stale-branches` — closed PRs whose head branch is still around (yours by default; `--author`/`--all` for others)
 - `notify` — poll CI until it finishes (macOS desktop notification when done)
 
@@ -259,6 +259,7 @@ as-is; re-run `init` only when you want ticket status too.
 | Show a Jira link in `todo` output                        | Ticket key in the **branch name** (title alone is not enough for `todo`)                  |
 | Show a Jira link in `mine` output                        | Ticket key in the **branch name** (same convention as `todo`)                             |
 | Show a Jira link in `track` output                       | Ticket key in the **branch name or title** (same convention as `prd`)                     |
+| Track a ticket's PRs (`track KF-1309`)                   | Ticket key is in the **PR title** as its own word; merged and closed PRs count too        |
 | Report the ticket in `mine --json` / `track --json`      | Ticket key in the **branch name or title** (as in `track`); its status needs a token      |
 | Show a ticket's Jira **status**                          | Same as the link, plus a token — see [Jira token](#jira-token)                             |
 
@@ -422,7 +423,7 @@ gh pr-tools -p work todo --json
 gh pr-tools -p work track --json --list ~/qa/release-42.txt
 ```
 
-Prints one JSON document instead of the table: the same PRs in the same order, each with its reviews, the approval verdict (against `APPROVAL_THRESHOLD`) and its review threads. `mine` lists every thread and adds `ci` (state, plus the failed checks as `workflow / job`), `mergeState` (GitHub's merge state, lowercased; `dirty` means conflicts), `pendingReviewers` (users and teams whose review is still requested) and `jira` (the ticket named by the branch or the title, with its status). `todo` lists only the threads you opened and adds `requestedFromMe`. `track` reports everything `mine` does, plus `state` (`open`, `merged` or `closed`; drafts are `open` with `isDraft`) and `closedAt` (when it merged or closed, `null` while open).
+Prints one JSON document instead of the table: the same PRs in the same order, each with its reviews, the approval verdict (against `APPROVAL_THRESHOLD`) and its review threads. `mine` lists every thread and adds `ci` (state, plus the failed checks as `workflow / job`), `mergeState` (GitHub's merge state, lowercased; `dirty` means conflicts), `pendingReviewers` (users and teams whose review is still requested) and `jira` (the ticket named by the branch or the title, with its status). `todo` lists only the threads you opened and adds `requestedFromMe`. `track` reports everything `mine` does, plus `state` (`open`, `merged` or `closed`; drafts are `open` with `isDraft`) and `closedAt` (when it merged or closed, `null` while open), and lists the tickets it was given in `tickets`, each with its status and the numbers of its PRs (`[]` while no PR names it).
 
 ```text
 { schemaVersion, command, generatedAt, repo, viewer,
@@ -435,33 +436,37 @@ Prints one JSON document instead of the table: the same PRs in the same order, e
 mine adds: ci: { state, failedJobs }, mergeState, pendingReviewers,
            jira: { key, url, status } | null
 track adds what mine adds, plus: state, closedAt
+and next to prs: tickets: [ { key, url, status, prs: [number] } ]
 ```
 
 `jira` is `null` when neither the branch name nor the title holds a ticket key (the rule `track` uses; the `JIRA` column of the table reads the branch only). Otherwise `url` is `null` without a Jira site in the profile, and `status` is `null` without a [Jira token](#jira-token), when the lookup failed, or when the account cannot see the ticket. A rejected token still prints its line on stderr.
 
 `threads` is `null` when a PR's thread lookup failed, `threadsTruncated` marks a cut at the 1,000-thread ceiling, and a thread whose comments were all deleted is omitted. New fields may appear without a version bump, so ignore unknown keys; a breaking change bumps `schemaVersion` (1 now).
 
-It is one-shot: exit 0 means stdout is exactly one JSON document, and any failure exits non-zero with the reason on stderr and nothing on stdout. `--watch`, `--long`, `--short-links` and `--short-labels` are rejected with `--json`; `--include-drafts`, `mine --include-assigned` and `track`'s PR arguments, `--list` and `--limit` work as usual. `mine --json` and `track --json` look the ticket statuses up like the table does, in one request next to the thread lookup; `todo --json` and the `mine` team-roster lookup are skipped. A `track` reference that cannot be used is still skipped with a line on stderr, and an empty list prints a document with no PRs.
+It is one-shot: exit 0 means stdout is exactly one JSON document, and any failure exits non-zero with the reason on stderr and nothing on stdout. `--watch`, `--long`, `--short-links` and `--short-labels` are rejected with `--json`; `--include-drafts`, `mine --include-assigned` and `track`'s PR arguments, `--list` and `--limit` work as usual. `mine --json` and `track --json` look the ticket statuses up like the table does, in one request next to the thread lookup; `todo --json` and the `mine` team-roster lookup are skipped. A `track` reference that cannot be used is still skipped with a line on stderr, and an empty list prints a document with no PRs. A ticket with no PR yet is no error, and `--json` prints no line for it either: its entry in `tickets` says so.
 
 ### `track` — a board for a set of PRs
 
 ```text
-gh pr-tools track [--long] [--short-links] [--short-labels] [--limit N] [--list FILE] [--json] [--watch[=INTERVAL]] [PR...]
+gh pr-tools track [--long] [--short-links] [--short-labels] [--limit N] [--list FILE] [--json] [--watch[=INTERVAL]] [PR|TICKET...]
 ```
 
 `todo` and `mine` are queues: they answer "what is on *my* plate", one from the reviewer's side and one from the author's. `track` answers a different question — "what is the state of *these* PRs" — and takes no view on who you are. It exists for the case where someone is shepherding a set of PRs toward a release and needs to see approvals, threads, CI and Jira status for all of them at once, regardless of who wrote them or who is reviewing.
 
-With no arguments it lists the repo's open PRs, oldest first, **drafts included** and your own included — up to `--limit` of them (50 by default), with a note on stderr when there are more. Name one or more PRs and it lists exactly those instead:
+With no arguments it lists the repo's open PRs, oldest first, **drafts included** and your own included — up to `--limit` of them (50 by default), with a note on stderr when there are more. Name one or more PRs or tickets and it lists exactly those instead:
 
 ```bash
 gh pr-tools track
 gh pr-tools track 1154 1160 1177
 gh pr-tools track https://github.com/acme/web/pull/1154/files
+gh pr-tools track KF-1309 https://acme.atlassian.net/browse/KF-1310 1177
 gh pr-tools track --limit 20 --short-links --short-labels
 gh pr-tools track --watch=10m 1154 1160
 ```
 
 A PR argument is a number or a GitHub PR link. Links are matched on their `<owner>/<repo>/pull/<number>` tail rather than by their last path segment, so the `/files` and `/commits` URLs you get from copying the address bar on a review page work as-is — and so does a GitHub Enterprise host. Because the link names its own repo, a link from a *different* repo is refused rather than quietly reinterpreted as that number in the profile's repo; showing the wrong PR confidently is worse than an error. Leading zeros are ignored, so `0160`, `#0160` and `160` are the same PR.
+
+A ticket argument is a key (`KF-1309`, in any case; with a [Jira prefix](#jira--pr-matching) set, only that prefix) or a Jira link to one: a browse link's last path segment, or the `selectedIssue` of a board link. It stands for **every PR whose title names the ticket** as a word of its own (up to 100), merged and closed ones included, oldest first, in the place the ticket was named; a PR named both ways is listed once. All the tickets are looked up in one search request. The title is what counts because GitHub's search cannot look inside branch names, so a PR that names its ticket in the branch alone is not found. A ticket no PR names yet prints a line on stderr and adds no rows; a follow-up PR opened later shows up on the next run, which is what makes a ticket worth naming instead of its PR numbers.
 
 An argument that can't be used — a typo, an issue number, a link to another repo — prints a line on stderr and is skipped. The rest of the table still renders, so one bad digit doesn't cost you the other nineteen rows.
 
@@ -476,6 +481,7 @@ An argument that can't be used — a typo, an issue number, a link to another re
 #1184
 https://github.com/acme/web/pull/1186/files
   691    # MongoDB migration, waiting on CI
+KF-1309  # every PR of the ticket
 
 # 1199  <- not started yet
 ```

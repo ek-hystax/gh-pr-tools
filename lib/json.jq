@@ -2,7 +2,7 @@ include "common";
 include "review-state";
 
 # Inputs (print_json, common.sh): $command, $repo, $me, $review, $watchUsers, $teamMembers, $approvalThreshold,
-# and for mine and track $jiraStatuses, $jiraBase, $jiraPattern
+# and for mine and track $jiraStatuses, $jiraBase, $jiraPattern, and for track $tickets
 
 def approval:
   .author.login as $a
@@ -65,15 +65,21 @@ def mergeStateOut:
 def pendingReviewersOut:
   [ (.reviewRequests // [])[] | (.login // .name) | select(type == "string" and . != "") ] | uniqKeepOrder | .[0:20];
 
+def ticketUrl($key): if $jiraBase == "" then null else "\($jiraBase)/\($key)" end;
+
 # The ticket named by the branch, or else by the title. null = no ticket key in either; status null = no token,
 # a failed lookup or an issue this account cannot see; url null = no Jira site in the profile.
 def jiraOut:
   jiraKeyFromBranchOrTitle($jiraPattern) as $key
   | if $key == null then null
     else { key: $key,
-           url: (if $jiraBase == "" then null else "\($jiraBase)/\($key)" end),
+           url: ticketUrl($key),
            status: ($jiraStatuses[$key] // null) }
     end;
+
+# The tickets track was given, in that order, with the PRs that name them (oldest first, maybe none yet).
+def ticketsOut:
+  [ $tickets[] | {key, url: ticketUrl(.key), status: ($jiraStatuses[.key] // null), prs} ];
 
 # GitHub's OPEN/MERGED/CLOSED, lowercased; draftness stays in isDraft.
 def stateOut: (.state // "OPEN") | ascii_downcase;
@@ -103,3 +109,4 @@ def prOut:
   prs: ((if $command == "todo" then map(select(isReviewer($me; $teamMembers))) else . end)
         | if $command == "track" then . else sort_by(.createdAt) end # track comes in the order it was asked for
         | map(prOut)) }
++ (if $command == "track" then {tickets: ticketsOut} else {} end)
