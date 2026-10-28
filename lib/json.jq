@@ -1,7 +1,8 @@
 include "common";
 include "review-state";
 
-# Inputs (print_json, common.sh): $command, $repo, $me, $review, $watchUsers, $teamMembers, $approvalThreshold
+# Inputs (print_json, common.sh): $command, $repo, $me, $review, $watchUsers, $teamMembers, $approvalThreshold,
+# and for mine $jiraStatuses, $jiraBase, $jiraPattern
 
 def approval:
   .author.login as $a
@@ -64,6 +65,16 @@ def mergeStateOut:
 def pendingReviewersOut:
   [ (.reviewRequests // [])[] | (.login // .name) | select(type == "string" and . != "") ] | uniqKeepOrder | .[0:20];
 
+# The ticket named by the branch, or else by the title. null = no ticket key in either; status null = no token,
+# a failed lookup or an issue this account cannot see; url null = no Jira site in the profile.
+def jiraOut:
+  jiraKeyFromBranchOrTitle($jiraPattern) as $key
+  | if $key == null then null
+    else { key: $key,
+           url: (if $jiraBase == "" then null else "\($jiraBase)/\($key)" end),
+           status: ($jiraStatuses[$key] // null) }
+    end;
+
 def prOut:
   { number,
     url,
@@ -78,7 +89,7 @@ def prOut:
     approval: approval,
     threads: threadsOut,
     threadsTruncated: ($review[0].threads[.number | tostring].truncated // false) }
-  + (if $command == "todo" then {requestedFromMe: requestedFrom($me; $teamMembers)} else {ci: ciOut, mergeState: mergeStateOut, pendingReviewers: pendingReviewersOut} end);
+  + (if $command == "todo" then {requestedFromMe: requestedFrom($me; $teamMembers)} else {ci: ciOut, mergeState: mergeStateOut, pendingReviewers: pendingReviewersOut, jira: jiraOut} end);
 
 { schemaVersion: 1,
   command: $command,

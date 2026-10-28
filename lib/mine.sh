@@ -118,11 +118,17 @@ fi
 for pid in "${search_pids[@]}"; do wait "$pid"; done
 prs=$(cat "$tmp"/search-* | jq -s 'add | unique_by(.number)')
 
-# --json: rich thread state only, no Jira lookup.
+# --json: rich thread state, plus each PR's ticket and its status. The ticket comes from the branch name or,
+# failing that, the title (the track convention): a consumer gating on the ticket must not miss one that only
+# the title names. The table's JIRA column keeps reading the branch only.
 if [ "$json" = true ]; then
+  keys=$(jira_ticket_keys "$prs" jiraKeyFromBranchOrTitle)
+  fetch_jira_statuses "$keys" > "$tmp/jira" &
+  jira_pid=$!
   watch_users=$(thread_watch_users)
   fetch_pr_review_state "$prs" "$me" threads "$watch_users" true > "$tmp/review-state"
-  print_json mine "$prs" "$me" "$tmp/review-state" "$watch_users" '{}'
+  wait "$jira_pid"
+  print_json mine "$prs" "$me" "$tmp/review-state" "$watch_users" '{}' "$(cat "$tmp/jira")"
   exit 0
 fi
 
