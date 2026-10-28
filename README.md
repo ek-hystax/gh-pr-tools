@@ -366,6 +366,8 @@ That last part is why a thread you opened needs a **second** comment from you to
 
 The three states run a traffic light, worst first: `pending` red, `answered` yellow, `resolved` green. The leading total stays cyan. States with a count of zero are left out, so a PR you've fully worked through reads `4 (4 resolved)` and one you haven't touched yet reads `2 (2 pending)`. Shows `-` only when the PR has no threads at all (or when the lookup fails).
 
+`CI` is `fail` as soon as one check has failed, `pending` while any still runs, and `pass` otherwise. A check that ran more than once on the same commit (a second trigger cancelling the first run, for example) counts by its latest run, the way GitHub judges the commit.
+
 `--short-labels` (`-S`) collapses the state words here too: `5 (1P 1A 3R)` instead of `5 (1 pending, 1 answered, 3 resolved)`.
 
 If [`THREAD_WATCH_USERS`](#watched-thread-authors-thread_watch_users) names any logins, each gets its own column right after `THREADS`, in the order configured, in both the default and `--long` views — and **their threads leave `THREADS`**, which therefore counts everything you are not tracking separately. Watching your review bot is what makes `THREADS` mean "a human opened this". Watching your *own* login works the same way: your threads move out of `THREADS` and into a column of their own.

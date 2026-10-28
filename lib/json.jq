@@ -55,7 +55,7 @@ def checkName:
 
 def ciOut:
   { state: (ciState | if . == "-" then "none" else . end),
-    failedJobs: ([ (.statusCheckRollup // [])[] | select(ciFail(.)) | checkName | select(. != "") ] | uniqKeepOrder | .[0:20]) };
+    failedJobs: ([ latestChecks[] | select(ciFail(.)) | checkName | select(. != "") ] | uniqKeepOrder | .[0:20]) };
 
 def mergeStateOut:
   (.mergeStateStatus // "") as $s

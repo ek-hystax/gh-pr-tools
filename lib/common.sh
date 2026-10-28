@@ -747,6 +747,9 @@ fetch_pr_review_state() {
 #                       flattens it to a top-level array, which is what
 #                       ciState reads. Aliased rollupCommits here so the
 #                       nesting is legible, and dropped after flattening.
+#                       A CheckRun's workflow name, which gh lifts to
+#                       workflowName, sits under checkSuite here; latestChecks
+#                       needs it to tell same-named jobs of two workflows apart.
 #   reviewRequests      (--json only) GraphQL nests each reviewer under
 #                       nodes[].requestedReviewer; gh returns the bare
 #                       array of reviewers that json.jq reads.
@@ -799,7 +802,7 @@ fetch_prs_by_number() {
     query+="reviews(first:100){nodes{id author{login} state submittedAt commit{oid}}} "
     query+="rollupCommits:commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename "
     query+="...on StatusContext{context state targetUrl createdAt description} "
-    query+="...on CheckRun{name status conclusion startedAt completedAt detailsUrl}}}}}}} "
+    query+="...on CheckRun{name status conclusion startedAt completedAt detailsUrl checkSuite{workflowRun{workflow{name}}}}}}}}}} "
     query+="${sel_extra}} "
   done <<<"$numbers"
   query+="}}"
@@ -826,7 +829,10 @@ fetch_prs_by_number() {
           | del(.rollupCommits)
           | .reviews = [$n.reviews.nodes[]?]
           | .statusCheckRollup =
-              [$n.rollupCommits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?]
+              [$n.rollupCommits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
+               | if .__typename == "CheckRun"
+                 then .workflowName = (.checkSuite.workflowRun.workflow.name // "") | del(.checkSuite)
+                 else . end]
           | if has("reviewRequests")
             then .reviewRequests = [$n.reviewRequests.nodes[]?.requestedReviewer | select(. != null and . != {})]
             else . end)

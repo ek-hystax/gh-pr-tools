@@ -156,8 +156,21 @@ def ciPending($c):
   or ($c.status == "COMPLETED" and $c.conclusion == null)
   or ($c.state | IN("PENDING", "EXPECTED"));
 
+# A check is one workflow job, or one status context. When it ran more than once on the same commit (a second
+# trigger cancelling the first run, say), only its latest run counts, which is how GitHub judges the commit.
+# A run that has not started yet has no time and is the newest one: "~" sorts after any ISO date.
+def checkKey: [(.workflowName // ""), (.name // .context // "")];
+def checkTime: .startedAt // .createdAt // "~";
+def latestChecks:
+  (.statusCheckRollup // []) as $all
+  | [ $all[] as $c
+      | ($c | checkKey) as $key
+      | ($c | checkTime) as $at
+      | select(all($all[]; checkKey != $key or checkTime <= $at))
+      | $c ];
+
 def ciState:
-  (.statusCheckRollup // []) as $checks
+  latestChecks as $checks
   | if ($checks | length) == 0 then "-"
     elif any($checks[]; ciFail(.)) then "fail"
     elif any($checks[]; ciPending(.)) then "pending"
