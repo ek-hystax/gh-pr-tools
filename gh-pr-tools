@@ -23,7 +23,7 @@ commands:
                                     list open PRs you're a reviewer on (--watch default: 5m)
   mine [--long] [--short-links] [--short-labels] [--include-drafts] [--include-assigned] [--json] [--watch[=INTERVAL]]
                                     list your own open PRs; --include-assigned adds ones assigned to you (--watch default: 5m)
-  track [--long] [--short-links] [--short-labels] [--limit N] [--list FILE] [--watch[=INTERVAL]] [PR...]
+  track [--long] [--short-links] [--short-labels] [--limit N] [--list FILE] [--json] [--watch[=INTERVAL]] [PR...]
                                     the repo's open PRs incl. drafts (oldest --limit, default 50), or
                                     just the ones you name by number or GitHub PR link (any state);
                                     --list reads them from a file, re-read each refresh (--watch default: 5m)
@@ -45,7 +45,7 @@ THREAD_WATCH_USERS (in a profile, or GH_PR_TOOLS_THREAD_WATCH_USERS in the envir
 list of logins; each gets its own review-thread column in todo/mine/track, and its threads leave the THREADS column.
 --short-labels (-S) shortens the review-thread state words in those columns: "6 (2 pending, 1 answered, 3 resolved)" becomes "6 (2P 1A 3R)".
 --include-drafts (-d) adds draft PRs to todo/mine, which leave them out by default; their STATUS reads "Draft".
---json (todo/mine) prints one JSON document instead of the table; incompatible with --watch, --long, --short-links, --short-labels.
+--json (todo/mine/track) prints one JSON document instead of the table; incompatible with --watch, --long, --short-links, --short-labels.
 EOF
 }
 

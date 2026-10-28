@@ -739,8 +739,8 @@ fetch_pr_review_state() {
 # one round trip for the whole set, regardless of how many numbers were
 # asked for.
 #
-# Two selections come back shaped differently from gh --json, and the jq at
-# the bottom normalizes both:
+# Three selections come back shaped differently from gh --json, and the jq at
+# the bottom normalizes all three:
 #   reviews             GraphQL returns {nodes, pageInfo, totalCount}; gh
 #                       returns the bare array that common.jq iterates.
 #   statusCheckRollup   GraphQL nests it under commits.nodes[0].commit; gh
@@ -750,6 +750,9 @@ fetch_pr_review_state() {
 #                       A CheckRun's workflow name, which gh lifts to
 #                       workflowName, sits under checkSuite here; latestChecks
 #                       needs it to tell same-named jobs of two workflows apart.
+#   reviewRequests      (--json only) GraphQL nests each reviewer under
+#                       nodes[].requestedReviewer; gh returns the bare
+#                       array of reviewers that json.jq reads.
 # reviews(first:100) and contexts(first:100) are unpaginated, matching the
 # identical caps in gh own fragment — so a PR with more than 100 reviews
 # undercounts APPROVALS here exactly as it already does in todo and mine.
@@ -763,14 +766,20 @@ fetch_pr_review_state() {
 #
 # Args: $1 = newline-separated PR numbers (digits only; anything else is
 # refused rather than interpolated into the query), $2 = true to include the
-# --long-only fields. Prints a JSON array of PR objects.
+# --long-only fields, $3 = true for the fields --json reports (closedAt,
+# mergeStateStatus, reviewRequests). Prints a JSON array of PR objects.
 fetch_prs_by_number() {
-  local numbers="$1" long="${2:-false}" owner repo_name number query result errfile sel_long=""
+  local numbers="$1" long="${2:-false}" json="${3:-false}" owner repo_name number query result errfile sel_extra=""
   owner="${REPO%%/*}"
   repo_name="${REPO##*/}"
   [ -n "$numbers" ] || { echo '[]'; return; }
 
-  [ "$long" = true ] && sel_long="changedFiles additions deletions mergeable mergeStateStatus"
+  [ "$long" = true ] && sel_extra+="changedFiles additions deletions mergeable mergeStateStatus "
+  # reviewRequests comes back as {login} for people and {name} for teams, as gh --json has it.
+  if [ "$json" = true ]; then
+    sel_extra+="closedAt mergeStateStatus reviewRequests(first:20){nodes{requestedReviewer{"
+    sel_extra+="...on User{login} ...on Team{name} ...on Bot{login} ...on Mannequin{login}}}} "
+  fi
 
   query="query(\$owner:String!,\$repo:String!){repository(owner:\$owner,name:\$repo){"
   while IFS= read -r number; do
@@ -790,11 +799,11 @@ fetch_prs_by_number() {
     }
     query+="pr${number}:pullRequest(number:${number}){"
     query+="number title url state isDraft createdAt updatedAt headRefName headRefOid author{login} "
-    query+="reviews(first:100){nodes{author{login} state submittedAt commit{oid}}} "
+    query+="reviews(first:100){nodes{id author{login} state submittedAt commit{oid}}} "
     query+="rollupCommits:commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename "
     query+="...on StatusContext{context state targetUrl createdAt description} "
     query+="...on CheckRun{name status conclusion startedAt completedAt detailsUrl checkSuite{workflowRun{workflow{name}}}}}}}}}} "
-    query+="${sel_long}} "
+    query+="${sel_extra}} "
   done <<<"$numbers"
   query+="}}"
 
@@ -823,7 +832,10 @@ fetch_prs_by_number() {
               [$n.rollupCommits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
                | if .__typename == "CheckRun"
                  then .workflowName = (.checkSuite.workflowRun.workflow.name // "") | del(.checkSuite)
-                 else . end])
+                 else . end]
+          | if has("reviewRequests")
+            then .reviewRequests = [$n.reviewRequests.nodes[]?.requestedReviewer | select(. != null and . != {})]
+            else . end)
   ' <<<"$result"
 }
 

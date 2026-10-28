@@ -9,6 +9,7 @@ source "$dir/common.sh"
 long=false
 short_links=false
 short_labels=false
+json=false
 watch=false
 watch_interval=5m
 limit=50
@@ -18,7 +19,7 @@ command_args=()
 
 usage_err() {
   echo "gh pr-tools track: $1" >&2
-  echo "usage: gh pr-tools track [--long|-l] [--short-links|-s] [--short-labels|-S] [--limit|-L N] [--list|-f FILE] [--watch|-w[=INTERVAL]] [PR...]" >&2
+  echo "usage: gh pr-tools track [--long|-l] [--short-links|-s] [--short-labels|-S] [--limit|-L N] [--list|-f FILE] [--json] [--watch|-w[=INTERVAL]] [PR...]" >&2
   exit 1
 }
 
@@ -87,6 +88,7 @@ while [ $# -gt 0 ]; do
     --long|-l) long=true; command_args+=("$1"); shift ;;
     --short-links|-s) short_links=true; command_args+=("$1"); shift ;;
     --short-labels|-S) short_labels=true; command_args+=("$1"); shift ;;
+    --json) json=true; shift ;;
     --limit|-L)
       [ $# -ge 2 ] || usage_err "$1 requires a number"
       limit="$2"; command_args+=("$1" "$2"); shift 2 ;;
@@ -107,7 +109,7 @@ while [ $# -gt 0 ]; do
       fi
       ;;
     --watch=*|-w=*) watch=true; watch_interval="${1#*=}"; shift ;;
-    -*) usage_err "unknown option '$1' (supported: --long, --short-links, --short-labels, --limit N, --list FILE, --watch[=INTERVAL])" ;;
+    -*) usage_err "unknown option '$1' (supported: --long, --short-links, --short-labels, --limit N, --list FILE, --json, --watch[=INTERVAL])" ;;
     *) refs+=("$1"); command_args+=("$1"); shift ;;
   esac
 done
@@ -115,6 +117,10 @@ done
 # ^[1-9][0-9]*$ rather than ^[0-9]+$ for the reason stale-branches gives: gh
 # reads a leading-zero numeral as octal, so "010" would quietly mean 8.
 [[ "$limit" =~ ^[1-9][0-9]*$ ]] || usage_err "invalid --limit '$limit' (expected a positive integer)"
+
+if [ "$json" = true ]; then
+  reject_json_conflicts track --long="$long" --short-links="$short_links" --short-labels="$short_labels" --watch="$watch"
+fi
 
 if [ "$watch" = true ]; then
   watch_seconds=$(watch_interval_seconds "$watch_interval") || {
@@ -230,7 +236,7 @@ if [ "${#numbers[@]}" -gt 0 ]; then
   # tracked list that was wrong, which is the failure this avoids — the
   # STATE column is what carries the difference.
   order=$(printf '%s\n' "${numbers[@]}" | jq -R 'select(length > 0) | tonumber' | jq -s .)
-  prs=$(fetch_prs_by_number "$(printf '%s\n' "${numbers[@]}")" "$long")
+  prs=$(fetch_prs_by_number "$(printf '%s\n' "${numbers[@]}")" "$long" "$json")
   while IFS= read -r n; do
     [ -n "$n" ] || continue
     echo "gh pr-tools track: no PR #$n in $REPO — skipped" >&2
@@ -260,6 +266,8 @@ else
   fields="number,title,author,url,state,isDraft,createdAt,updatedAt,headRefName,headRefOid,reviews,statusCheckRollup"
   if [ "$long" = true ]; then
     fields="$fields,changedFiles,additions,deletions,mergeable,mergeStateStatus"
+  elif [ "$json" = true ]; then
+    fields="$fields,closedAt,mergeStateStatus,reviewRequests"
   fi
   order='[]'
   # One row past the limit is asked for so that a cut-off listing can say so.
@@ -271,6 +279,20 @@ else
     prs=$(jq -c --argjson n "$limit" '.[:$n]' <<<"$prs")
     echo "gh pr-tools track: showing the oldest $limit open PRs; there are more — raise --limit to see them" >&2
   fi
+fi
+
+# --json: the mine --json lookups (rich threads, ticket statuses), PRs in the order the table shows them.
+if [ "$json" = true ]; then
+  me="${GH_USERNAME:-$(gh api user --jq .login)}"
+  keys=$(jira_ticket_keys "$prs" jiraKeyFromBranchOrTitle)
+  fetch_jira_statuses "$keys" > "$tmp/jira" &
+  jira_pid=$!
+  watch_users=$(thread_watch_users)
+  fetch_pr_review_state "$prs" "" threads "$watch_users" true > "$tmp/review-state"
+  wait "$jira_pid"
+  prs=$(jq -L "$dir" -c --argjson order "$order" 'include "common"; trackOrder($order)' <<<"$prs")
+  print_json track "$prs" "$me" "$tmp/review-state" "$watch_users" '{}' "$(cat "$tmp/jira")"
+  exit 0
 fi
 
 # Review threads and Jira statuses, exactly as mine fetches them — see

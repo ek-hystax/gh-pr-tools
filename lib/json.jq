@@ -2,7 +2,7 @@ include "common";
 include "review-state";
 
 # Inputs (print_json, common.sh): $command, $repo, $me, $review, $watchUsers, $teamMembers, $approvalThreshold,
-# and for mine $jiraStatuses, $jiraBase, $jiraPattern
+# and for mine and track $jiraStatuses, $jiraBase, $jiraPattern
 
 def approval:
   .author.login as $a
@@ -39,7 +39,7 @@ def threadsOut:
     else
       ($watchUsers | map(.key)) as $watchKeys
       | [ $r.nodes[]
-          | select($command == "mine" or .comments.nodes[0].author.login == $me)
+          | select($command != "todo" or .comments.nodes[0].author.login == $me)
           | select(.lastComments.nodes[0] != null)
           | threadOut($r.owners; $watchKeys) ]
     end;
@@ -75,6 +75,9 @@ def jiraOut:
            status: ($jiraStatuses[$key] // null) }
     end;
 
+# GitHub's OPEN/MERGED/CLOSED, lowercased; draftness stays in isDraft.
+def stateOut: (.state // "OPEN") | ascii_downcase;
+
 def prOut:
   { number,
     url,
@@ -89,7 +92,8 @@ def prOut:
     approval: approval,
     threads: threadsOut,
     threadsTruncated: ($review[0].threads[.number | tostring].truncated // false) }
-  + (if $command == "todo" then {requestedFromMe: requestedFrom($me; $teamMembers)} else {ci: ciOut, mergeState: mergeStateOut, pendingReviewers: pendingReviewersOut, jira: jiraOut} end);
+  + (if $command == "todo" then {requestedFromMe: requestedFrom($me; $teamMembers)} else {ci: ciOut, mergeState: mergeStateOut, pendingReviewers: pendingReviewersOut, jira: jiraOut} end)
+  + (if $command == "track" then {state: stateOut, closedAt: (.closedAt // null)} else {} end);
 
 { schemaVersion: 1,
   command: $command,
@@ -97,5 +101,5 @@ def prOut:
   repo: $repo,
   viewer: $me,
   prs: ((if $command == "todo" then map(select(isReviewer($me; $teamMembers))) else . end)
-        | sort_by(.createdAt)
+        | if $command == "track" then . else sort_by(.createdAt) end # track comes in the order it was asked for
         | map(prOut)) }
