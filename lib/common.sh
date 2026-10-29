@@ -555,17 +555,19 @@ thread_watch_users() {
 # On a thread someone else opened the floor is inert — a last comment from
 # the owner already implies a second comment — so the rule is stated once
 # and applies everywhere rather than branching on the opener.
-# Both connections are paginated, up to review_state_max_pages pages of 100
-# each (1,000 threads, 1,000 files) per PR. The first page of every PR comes
-# from one batched query. Any connection that reports a next page then goes
-# into follow-up rounds: each round is one query with an alias per page still
-# wanted, across every PR, so the number of round trips is set by the PR
-# needing the most rounds rather than by the total across PRs. Threads follow
-# their cursors one page per round. Files cursors are base64-encoded
-# offsets, so when a PR's first page confirms that, all of its remaining file
-# pages go in a single round (see offsetCursor in review-state.jq). A round
-# holds at most review_state_max_aliases pages; the rest wait for the next.
-# A run where no PR has more than 100 threads (or, with files, more than 100
+# Both connections are paginated, up to review_state_max_pages pages per PR:
+# threads start with a page of 25 (firstThreads in review-state.jq) and go on
+# in pages of 100 (925 threads), files take pages of 100 (1,000 files). The
+# first page of every PR comes from one batched query. Any connection that
+# reports a next page then goes into follow-up rounds: each round is one query
+# with an alias per page still wanted, across every PR, so the number of round
+# trips is set by the PR needing the most rounds rather than by the total
+# across PRs. Threads follow their cursors one page per round. Files cursors
+# are base64-encoded offsets, so when a PR's first page confirms that, all of
+# its remaining file pages go in a single round (see offsetCursor in
+# review-state.jq). A round holds at most review_state_max_aliases pages; the
+# rest wait for the next.
+# A run where no PR has more than 25 threads (or, with files, more than 100
 # files) makes no follow-up round.
 # A connection that hits the page ceiling, or whose follow-up page fails, is
 # reported as "truncated" from whatever was fetched so far: threadsCell and

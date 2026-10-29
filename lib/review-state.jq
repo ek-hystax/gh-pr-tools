@@ -46,9 +46,15 @@ def pageOk: (.nodes | type) == "array";
 
 def conn: {nodes, hasNext: (.pageInfo.hasNextPage // false), cursor: .pageInfo.endCursor, pages: 1, failed: false};
 
+# GitHub prices a query by the page sizes it asks for, not by what comes
+# back, and every thread brings two comment connections: first:100 costs
+# about 2 points per PR, first:25 about half a point. Most PRs have far fewer
+# threads, and the follow-up rounds (pages of 100) fetch the rest.
+def firstThreads: 25;
+
 def firstRequest($owner; $repo; $wantViewed; $rich):
   { query: ("query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){"
-            + (map("pr\(.number):pullRequest(number:\(.number)){reviewThreads(first:100){\(threadSel($rich))}"
+            + (map("pr\(.number):pullRequest(number:\(.number)){reviewThreads(first:\(firstThreads)){\(threadSel($rich))}"
                    + (if $wantViewed then " changedFiles files(first:100){\(fileSel)}" else "" end)
                    + "}")
                | join(" "))
